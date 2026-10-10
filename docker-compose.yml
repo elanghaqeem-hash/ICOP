@@ -1,5 +1,8 @@
 # ICOP CyberBusiness 360 — stack lokal/staging
-# Jalankan: cp .env.example .env  (isi nilai)  →  docker compose up -d --build
+# Jalankan migrasi manual SEBELUM menyalakan API (tidak lagi otomatis saat startup).
+# cp .env.example .env (isi secrets) -> docker compose build -> docker compose up -d postgres
+# -> docker compose --profile migration run --rm migrate -> docker compose up -d
+# Untuk staging terisolasi dan pemeriksaan port, gunakan docker-compose.staging.yml.
 services:
   postgres:
     image: postgres:16-alpine
@@ -13,6 +16,18 @@ services:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-icop_app} -d ${DB_NAME:-icop}"]
       interval: 5s
       retries: 10
+
+  migrate:
+    # Explicit, one-shot, operator-approved schema upgrade. Not started by ordinary up.
+    profiles: ["migration"]
+    build: { context: ./apps/api }
+    env_file: .env
+    environment:
+      DB_HOST: postgres
+      NODE_ENV: production
+    depends_on:
+      postgres: { condition: service_healthy }
+    command: ["node", "dist/migrate.js"]
 
   redis:
     image: redis:7-alpine
