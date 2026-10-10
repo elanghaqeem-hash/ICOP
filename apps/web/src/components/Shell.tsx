@@ -2,7 +2,7 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState, type ReactNode } from 'react';
-import { api, getSession, setSession } from '@/lib/api';
+import { api, setSession } from '@/lib/api';
 import { MeContext, type Me } from './ui';
 
 const NAV = [
@@ -37,8 +37,10 @@ export default function Shell({ children }: { children: ReactNode }) {
   const router = useRouter();
 
   useEffect(() => {
-    if (!getSession()) { router.replace('/login'); return; }
+    // Validate the server cookie on every page load; memory metadata is not
+    // an authentication source of truth (including after a hard refresh).
     api<Me>('/api/v1/auth/me').then((m) => {
+      setSession({ user: { id: m.id, email: m.email, fullName: m.fullName, role: m.role, customerId: m.customerId } });
       setMe(m);
       if (m.role === 'customer_user' && !path.startsWith('/portal')) router.replace('/portal');
       if (m.permissions.includes('approval.decide')) api('/api/v1/approvals').then((r) => setPending(r.items.length)).catch(() => {});
@@ -52,7 +54,12 @@ export default function Shell({ children }: { children: ReactNode }) {
   if (!me) return <div className="main"><div className="skeleton" /><div className="skeleton" /></div>;
   const items = NAV.filter((n) => me.permissions.includes(n.perm));
   const isOn = (h: string) => (h === '/' ? path === '/' : h === '/portal' ? path === '/portal' || /^\/portal\/[0-9a-f-]{36}$/.test(path) : path.startsWith(h));
-  const logout = () => { setSession(null); router.replace('/login'); };
+  const logout = async () => {
+    try { await api('/api/v1/auth/logout', { method: 'POST' }); }
+    catch (error) { console.error('ICOP logout failed', error); return; }
+    setSession(null);
+    router.replace('/login');
+  };
 
   return (
     <MeContext.Provider value={me}>
@@ -64,7 +71,7 @@ export default function Shell({ children }: { children: ReactNode }) {
               <span>{n.ico}&nbsp; {n.label}</span>{n.href === '/approvals' && pending > 0 && <span className="dot">{pending}</span>}
             </Link>
           ))}
-          <div className="foot">{me.fullName}<br />{me.role.replace(/_/g, ' ')}<br /><a href="#" onClick={logout} style={{ color: '#cfd6e6' }}>Keluar</a></div>
+          <div className="foot">{me.fullName}<br />{me.role.replace(/_/g, ' ')}<br /><button type="button" onClick={logout} className="logout-btn" style={{ color: '#cfd6e6', background: 'none', border: 0, padding: 0, cursor: 'pointer' }}>Keluar</button></div>
         </nav>
         <main className="main">{children}</main>
         <nav className="bottom" aria-label="Navigasi cepat">
