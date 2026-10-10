@@ -47,7 +47,17 @@ npm run dev                     # API :3001 — dokumentasi OpenAPI di /api/docs
 cd ../web && npm ci && npm run dev   # UI :3000
 ```
 
-Atau dengan Docker: `cp .env.example .env` → isi → `RUN_SEED=true docker compose up -d --build`.
+Atau dengan Docker (migrasi sekarang **eksplisit** dan **tidak berjalan otomatis saat startup**):
+
+```bash
+cp .env.example .env  # isi sendiri dengan secret acak dan DB staging/lokal, jangan commit
+docker compose build
+docker compose up -d postgres
+docker compose --profile migration run --rm migrate
+docker compose up -d
+```
+
+Penting: khusus lab lokal yang memang memerlukan data demo, seeding harus diperintah secara terpisah oleh operator (jangan lakukan di production). Runtime API menolak startup bila skema migrasi 013 belum memenuhi preflight.
 
 User seed (password = `SEED_PASSWORD`, wajib diganti saat login pertama): `admin@`, `companyadmin@`, `direktur@`, `vp@`, `salesmanager@`, `sales@`, `presales@`, `architect@`, `finance@`, `legal@`, `tender@`, `pm@`, `product@`, `auditor@` — semua `@defendit360.com`.
 
@@ -116,3 +126,9 @@ A separately uploaded Phase 6 source snapshot adds business-calendar and contrac
 - Reconciliation and scope controls: [docs/22-Phase6-Source-Reconciliation-Gate.md](docs/22-Phase6-Source-Reconciliation-Gate.md).
 
 **Not production ready.** Gate6A CI success establishes only tested source integration. Do not merge PR #5 or PR #1 until live HTTPS staging, finance validation, data/tenant security tests, independent penetration test and owner acceptance have passed.
+
+## Gate Staging Runtime — Phase 6B2 (10 Oktober 2026)
+
+Source Phase 6B2 sudah terintegrasi ke `main` dengan AI tender compliance **default OFF**. Staging rehearsal sekarang menggunakan `docker-compose.staging.yml` (standalone, tanpa publikasi port API/Postgres) serta workflow `.github/workflows/staging-container-rehearsal.yml`. Cakupan verifikasi: build container API/Web, startup API harus gagal bila skema belum siap, migrasi 001–013 hanya melalui operator task `migrate`, read-only postflight, backup/restore ke database uji kedua, halaman login, BFF tanpa sesi, CSRF/cross-origin, dan port host privat.
+
+Lihat [runbook staging](docs/26-Phase6B2-Staging-DB-Runbook.md). GitHub CI memakai DB dan secrets **sementara**; ini **bukan** deployment Cloudflare/Vercel, bukan database staging yang dibagikan, dan bukan verifikasi HTTPS produksi. Sebelum customer UAT, tetap diperlukan host/DB staging terpisah, HTTPS, backup yang teruji, secrets, penilaian keamanan independen, dan persetujuan owner. Jangan gunakan `RUN_SEED=true` atau migrasi otomatis dalam deploy produksi.

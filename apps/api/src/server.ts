@@ -1,7 +1,19 @@
 import { buildApp } from './app.js';
 import { config } from './config.js';
+import { inspectMigrationGate } from './migration-preflight.js';
 
 const app = await buildApp();
+// Strict release gate: a production API must NEVER serve traffic on a database
+// with unapproved/pending/missing SQL migrations. This is READ ONLY, not a migration.
+if (config.nodeEnv === 'production') {
+  const gate = await inspectMigrationGate(app.sql, 'post');
+  if (!gate.ok) {
+    app.log.error({ migrationIssues: gate.issues },
+      'Refusing to start: database schema has not passed release preflight');
+    await app.close();
+    process.exit(1);
+  }
+}
 try {
   await app.listen({ port: config.port, host: config.host });
 } catch (e) {

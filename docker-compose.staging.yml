@@ -1,0 +1,77 @@
+# ICOP isolated container-based staging/CI rehearsal.
+# Run with: docker compose -f docker-compose.staging.yml --profile migration run --rm migrate
+# Then:     docker compose -f docker-compose.staging.yml up -d postgres api web
+# Postgres and API have NO public host ports. Only Next.js on loopback for testing.
+# A separate trusted HTTPS reverse proxy is required for shared staging.
+name: icop-staging-rehearsal
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${DB_NAME:?DB_NAME required}
+      POSTGRES_USER: ${DB_USER:?DB_USER required}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD required}
+    volumes:
+      - staging_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    networks: [internal]
+
+  migrate:
+    profiles: [migration]
+    build: {context: ./apps/api}
+    image: icop-api-staging-local
+    env_file: .env
+    environment:
+      DB_HOST: postgres
+      NODE_ENV: production
+    command: ["node", "dist/migrate.js"]
+    depends_on:
+      postgres: {condition: service_healthy}
+    networks: [internal]
+
+  api:
+    build: {context: ./apps/api}
+    image: icop-api-staging-local
+    env_file: .env
+    environment:
+      DB_HOST: postgres
+      NODE_ENV: production
+      RUN_SEED: "false"
+      SCHEDULER_ENABLED: "false"
+      JOB_WORKER_ENABLED: "false"
+      DOCUMENT_DIR: /app/storage/documents
+      UPLOAD_DIR: /app/storage/uploads
+    volumes: [staging_documents:/app/storage]
+    depends_on:
+      postgres: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 4s
+      retries: 20
+      start_period: 10s
+    networks: [internal]
+
+  web:
+    build: {context: ./apps/web}
+    image: icop-web-staging-local
+    environment:
+      API_INTERNAL_URL: http://api:3001
+      APP_PUBLIC_ORIGIN: ${APP_PUBLIC_ORIGIN:?APP_PUBLIC_ORIGIN required}
+      NODE_ENV: production
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      api: {condition: service_healthy}
+    networks: [internal]
+
+volumes:
+  staging_postgres:
+  staging_documents:
+networks:
+  internal:
+    internal: false

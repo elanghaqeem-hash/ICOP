@@ -19,5 +19,6 @@ RUN mkdir -p /app/storage && chown node:node /app/storage
 VOLUME ["/app/storage"]
 USER node
 EXPOSE 3001
-# Migrasi berjalan idempoten saat start; seed hanya bila RUN_SEED=true
-CMD ["sh", "-c", "node dist/migrate.js $( [ \"$RUN_SEED\" = true ] && echo --seed ) && node dist/server.js"]
+# Migrations MUST run as a deliberate, approved one-shot task, after a tested DB backup.
+# Startup only validates the expected schema; it never mutates it or seeds users.
+CMD ["node", "dist/server.js"]

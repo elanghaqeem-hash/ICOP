@@ -1,0 +1,126 @@
+name: ICOP Staging Container Rehearsal (no deployment)
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'apps/api/**'
+      - 'apps/web/**'
+      - 'docker-compose.staging.yml'
+      - '.github/workflows/staging-container-rehearsal.yml'
+      - 'infra/staging/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: icop-staging-rehearsal-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  isolated-staging:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create disposable CI-only staging secrets (never print)
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          dbpass="$(openssl rand -hex 24)"
+          jwt="$(openssl rand -hex 48)"
+          master="$(openssl rand -hex 32)"
+          cat > .env <<EOF
+          NODE_ENV=production
+          DB_HOST=postgres
+          DB_PORT=5432
+          DB_NAME=icop_staging_ci
+          DB_USER=icop_ci
+          DB_PASSWORD=${dbpass}
+          DATABASE_URL=postgres://icop_ci:${dbpass}@postgres:5432/icop_staging_ci
+          JWT_SECRET=${jwt}
+          SECRETS_MASTER_KEY=${master}
+          ALLOWED_ORIGINS=http://127.0.0.1:3000
+          APP_PUBLIC_ORIGIN=http://127.0.0.1:3000
+          API_INTERNAL_URL=http://api:3001
+          MFA_POLICY=privileged
+          LOGIN_RATE_LIMIT=10
+          RUN_SEED=false
+          SCHEDULER_ENABLED=false
+          JOB_WORKER_ENABLED=false
+          ESIGN_SANDBOX_ENABLED=false
+          API_DOCS_ENABLED=false
+          TRUST_PROXY=false
+          EOF
+      - name: Build isolated Docker API and Next frontend
+        run: docker compose -f docker-compose.staging.yml build api web
+      - name: Start disposable PostgreSQL 16
+        run: docker compose -f docker-compose.staging.yml up -d --wait postgres
+      - name: Confirm API refuses unprepared schema
+        shell: bash
+        run: |
+          set -euo pipefail
+          if docker compose -f docker-compose.staging.yml run --rm api node dist/server.js; then
+            echo "FAIL: production API served before migration 013 was applied"
+            exit 1
+          fi
+          echo "PASS: production API rejected unprepared database"
+      - name: Run explicit one-shot migration (CI DB only)
+        run: docker compose -f docker-compose.staging.yml --profile migration run --rm migrate
+      - name: Validate schema 013 using read-only preflight
+        run: docker compose -f docker-compose.staging.yml run --rm api node dist/migration-preflight.js --target=post
+      - name: Rehearse backup and restore to a second disposable DB
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker compose -f docker-compose.staging.yml exec -T postgres sh -c 'PGPASSWORD="$POSTGRES_PASSWORD" pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > /tmp/icop-ci-staging.dump
+          test -s /tmp/icop-ci-staging.dump
+          docker compose -f docker-compose.staging.yml exec -T postgres sh -c 'PGPASSWORD="$POSTGRES_PASSWORD" createdb -U "$POSTGRES_USER" icop_restore_ci'
+          docker compose -f docker-compose.staging.yml exec -T postgres sh -c 'PGPASSWORD="$POSTGRES_PASSWORD" pg_restore -U "$POSTGRES_USER" -d icop_restore_ci' < /tmp/icop-ci-staging.dump
+          docker compose -f docker-compose.staging.yml exec -T postgres sh -c 'PGPASSWORD="$POSTGRES_PASSWORD" psql -U "$POSTGRES_USER" -d icop_restore_ci -Atqc "SELECT name FROM schema_migrations"' | grep -Fxq '013_phase6_tender_suggestions.sql'
+          echo "PASS: explicit migration 013 survived backup/restore to isolated database"
+      - name: Start API and frontend only after approved schema is present
+        run: docker compose -f docker-compose.staging.yml up -d --wait api web
+      - name: Verify local BFF -> private API, anonymous access and CSRF
+        shell: bash
+        run: |
+          set -euo pipefail
+          code=""
+          for attempt in $(seq 1 35); do
+            code="$(curl -s -o /tmp/icop-ci-login.html -w '%{http_code}' http://127.0.0.1:3000/login || true)"
+            [ "$code" = "200" ] && break
+            sleep 2
+          done
+          test "$code" = "200"
+          grep -qi "ICOP" /tmp/icop-ci-login.html
+          code="$(curl -s -o /tmp/icop-ci-private.json -w '%{http_code}' http://127.0.0.1:3000/api/v1/auth/me)"
+          test "$code" = "401"
+          code="$(curl -s -o /tmp/icop-ci-csrf.json -w '%{http_code}' \
+            -X POST http://127.0.0.1:3000/api/v1/auth/login \
+            -H 'origin: https://attacker.invalid' \
+            -H 'content-type: application/json' \
+            -d '{"email":"nobody@example.invalid","password":"invalid"}')"
+          test "$code" = "403"
+          # "docker compose port" can succeed for EXPOSE-only container ports;
+          # "docker port <container>" lists ONLY actual host-published bindings.
+          for service in api postgres; do
+            cid="$(docker compose -f docker-compose.staging.yml ps -q "$service")"
+            test -n "$cid"
+            published="$(docker port "$cid" 2>/dev/null || true)"
+            if [ -n "$published" ]; then
+              echo "FAIL: $service has a host-published port"
+              exit 1
+            fi
+          done
+          echo "PASS: Next login 200, no-session BFF 401, cross-origin POST 403, API/DB private"
+      - name: Diagnostics on failure (no secrets)
+        if: failure()
+        shell: bash
+        run: |
+          docker compose -f docker-compose.staging.yml ps || true
+          docker compose -f docker-compose.staging.yml logs --tail 45 api web || true
+      - name: Tear down disposable infrastructure
+        if: always()
+        shell: bash
+        run: |
+          docker compose -f docker-compose.staging.yml --profile migration down -v --remove-orphans || true
+          rm -f .env /tmp/icop-ci-staging.dump

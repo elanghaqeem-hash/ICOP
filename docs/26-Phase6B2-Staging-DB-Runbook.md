@@ -52,3 +52,33 @@ The integration CI with PostgreSQL 16, BFF smoke and production dependency audit
 **Rollback:** disable feature, revert application to prior verified deploy if necessary; do not blindly reverse destructive database migrations. A schema rollback needs DBA/owner signoff and verified recovery of dependent data.
 
 **Result:** This PR provides a *testable staging readiness tool and version-upgrade regression*, **not evidence of actual staging or production deployment**.
+
+## Phase 6B2 staging runtime rehearsal (10 Oct 2026 increment)
+
+**Important change in the API container:** `apps/api/Dockerfile` no longer automatically calls the migrator or seed on startup. The production API checks migration 013 metadata in a **read-only gate before opening its listen socket** and refuses to start if the schema is incomplete. Treat database upgrades as explicit release events; previously automatic boot-time migrations were unsafe for controlled customer deployment.
+
+**Standalone Compose:** `docker-compose.staging.yml` is an isolated/local staging rehearsal, NOT a shared HTTPS deployment. It exposes only Next.js on `127.0.0.1:3000` (no host ports for PostgreSQL or Fastify API). A trusted HTTPS reverse proxy and approved separate staging PostgreSQL must be provisioned for actual multi-user UAT. `SCHEDULER_ENABLED=false` and `JOB_WORKER_ENABLED=false` avoid duplicated production jobs in rehearsal.
+
+**Required operator order on an approved isolated staging host:**
+
+```bash
+# Place production-strength staging-only DB_PASSWORD, DATABASE_URL, JWT_SECRET,
+# SECRETS_MASTER_KEY, ALLOWED_ORIGINS, APP_PUBLIC_ORIGIN in a protected .env file.
+# Never use .env.example's weak placeholders or real production database credentials.
+docker compose -f docker-compose.staging.yml build api web
+docker compose -f docker-compose.staging.yml up -d --wait postgres
+
+# Check restore capability and take a recoverable backup BEFORE migration.
+# The migration service is excluded from ordinary 'up'.
+docker compose -f docker-compose.staging.yml --profile migration run --rm migrate
+docker compose -f docker-compose.staging.yml run --rm api \
+  node dist/migration-preflight.js --target=post
+docker compose -f docker-compose.staging.yml up -d --wait api web
+
+# Visit http://127.0.0.1:3000/login only on an isolated test host.
+# Shared/customer environments REQUIRE HTTPS before any authenticated session.
+```
+
+**Automated non-production rehearsal:** `.github/workflows/staging-container-rehearsal.yml` builds both containers, creates random throwaway CI credentials and a clean PostgreSQL 16 volume, verifies that API startup without migrations is blocked, manually runs migrations, performs read-only postflight, dumps and restores to a distinct DB, then checks /login HTTP 200, anonymous BFF HTTP 401, malicious Origin POST HTTP 403, and no API/Postgres published host ports. CI teardown deletes volumes and ephemeral secrets. This DOES NOT access or prove safety of real staging or production backups.
+
+**Deployment and operational gates are still BLOCKED:** real DNS/TLS, secret distribution, database backups/restore, identity/MFA UAT, privacy/provider contractual approvals, mobile user acceptance and pen-test results remain unavailable. Do not enable `tender_compliance` on any customer tenant automatically.
