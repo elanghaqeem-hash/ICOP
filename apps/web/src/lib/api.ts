@@ -1,19 +1,20 @@
 'use client';
 
 /**
- * Klien API. Token disimpan di sessionStorage (hilang saat tab ditutup) — bukan localStorage.
- * Hardening Phase 5: pindah ke cookie httpOnly via BFF.
+ * Browser session metadata is memory-only. The bearer JWT lives exclusively in
+ * the BFF's httpOnly cookie and is never exposed through client JavaScript.
+ * On a full reload, Shell fetches /auth/me from the BFF to restore identity.
  */
-const KEY = 'icop.session';
+export interface Session { user: { id: string; email: string; fullName: string; role: string; customerId: string | null; forcePasswordChange?: boolean } }
+let currentSession: Session | null = null;
+export function getSession(): Session | null { return currentSession; }
+export function setSession(session: Session | null) { currentSession = session; }
 
-export interface Session { token: string; user: { id: string; email: string; fullName: string; role: string; customerId: string | null; forcePasswordChange?: boolean } }
-
-export function getSession(): Session | null {
-  if (typeof window === 'undefined') return null;
-  try { const s = sessionStorage.getItem(KEY); return s ? JSON.parse(s) : null; } catch { return null; }
-}
-export function setSession(s: Session | null) {
-  try { if (s) sessionStorage.setItem(KEY, JSON.stringify(s)); else sessionStorage.removeItem(KEY); } catch { /* storage blocked */ }
+function csrfHeaders(): Record<string, string> {
+  if (typeof document === 'undefined') return {};
+  const name = location.protocol === 'https:' ? '__Host-icop-csrf' : 'icop-dev-csrf';
+  const raw = document.cookie.split('; ').find((c) => c.startsWith(name + '='));
+  return raw ? { 'x-icop-csrf': decodeURIComponent(raw.slice(name.length + 1)) } : {};
 }
 
 export class ApiError extends Error {
@@ -21,12 +22,13 @@ export class ApiError extends Error {
 }
 
 export async function api<T = any>(path: string, opts: { method?: string; body?: unknown; idempotencyKey?: string } = {}): Promise<T> {
-  const s = getSession();
+  const method = opts.method ?? (opts.body !== undefined ? 'POST' : 'GET');
   const headers: Record<string, string> = {};
   if (opts.body !== undefined) headers['content-type'] = 'application/json';
-  if (s) headers.authorization = `Bearer ${s.token}`;
+  if (!['GET', 'HEAD'].includes(method.toUpperCase())) Object.assign(headers, csrfHeaders());
   if (opts.idempotencyKey) headers['idempotency-key'] = opts.idempotencyKey;
-  const res = await fetch(path, { method: opts.method ?? (opts.body !== undefined ? 'POST' : 'GET'), headers, body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined });
+  const res = await fetch(path, { method, headers, credentials: 'same-origin', cache: 'no-store',
+    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined });
   const ct = res.headers.get('content-type') ?? '';
   const data = ct.includes('json') ? await res.json() : await res.text();
   if (!res.ok) {
@@ -48,10 +50,9 @@ export const STATUS_TONE: Record<string, string> = {
   REVISION_REQUESTED: 'warn', PENDING: 'warn', SUPERSEDED: '', WON: 'ok', LOST: 'bad', REVIEWED: 'ok', ENGINEER_REVIEW_REQUIRED: 'warn',
 };
 
-/** Upload multipart (FormData) dengan token. */
+/** Authenticated multipart upload via the same-origin BFF. */
 export async function apiUpload<T = any>(path: string, form: FormData): Promise<T> {
-  const s = getSession();
-  const res = await fetch(path, { method: 'POST', body: form, headers: s ? { authorization: `Bearer ${s.token}` } : {} });
+  const res = await fetch(path, { method: 'POST', body: form, headers: csrfHeaders(), credentials: 'same-origin', cache: 'no-store' });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new ApiError(res.status, data?.code ?? 'ERROR', data?.message ?? `HTTP ${res.status}`, data?.details);
   return data as T;
@@ -59,8 +60,7 @@ export async function apiUpload<T = any>(path: string, form: FormData): Promise<
 
 /** Unduh file terautentikasi (DOCX, CSV, dokumen tender). */
 export async function apiDownload(path: string, fallbackName: string) {
-  const s = getSession();
-  const res = await fetch(path, { headers: s ? { authorization: `Bearer ${s.token}` } : {} });
+  const res = await fetch(path, { credentials: 'same-origin', cache: 'no-store' });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new ApiError(res.status, d?.code ?? 'ERROR', d?.message ?? `HTTP ${res.status}`); }
   const cd = res.headers.get('content-disposition') ?? '';
   const name = /filename="([^"]+)"/.exec(cd)?.[1] ?? fallbackName;
