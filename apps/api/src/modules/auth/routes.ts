@@ -31,7 +31,7 @@ export async function authRoutes(app: FastifyInstance) {
     const token = app.jwt.sign({
       sub: String(u.id), tid: String(u.tenantId), role: String(u.role),
       tv: Number(u.tokenVersion), pwc: !!u.forcePasswordChange,
-      mfa: verifiedMfa, purpose,
+      mfa: verifiedMfa, mfaAt: verifiedMfa ? Math.floor(Date.now() / 1000) : undefined, purpose,
     }, { expiresIn: purpose === 'mfa' ? '5m' : config.jwtTtl });
     return { token, mfaRequired: needed && !verifiedMfa,
       mfaEnrolled: !!u.mfaEnabled, user: userView(u) };
@@ -167,6 +167,38 @@ export async function authRoutes(app: FastifyInstance) {
       out.error!, 'Verifikasi autentikator gagal');
     return issueToken(out.updated!, true);
   });
+  // Reverify a fresh TOTP before high-impact approval. Existing verified
+  // access cookie remains server-only; a new token carries fresh mfaAt.
+  app.post('/api/v1/auth/mfa/step-up', { onRequest: [app.authenticate],
+    config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req) => {
+    const { code } = CodeBody.parse(req.body);
+    const u = req.authUser;
+    if (!u.mfaEnrolled || !u.mfaVerified) {
+      throw new AppError(403, 'MFA_REQUIRED', 'Selesaikan login MFA terlebih dahulu');
+    }
+    const result = await app.sql.begin(async (tx) => {
+      const [row] = await tx`SELECT * FROM users WHERE tenant_id = ${u.tenantId} AND id = ${u.id} FOR UPDATE`;
+      if (!row?.mfaEnabled || !row.mfaSecretEnc) return { error: 'MFA_SETUP_REQUIRED' };
+      if (row.mfaLockedUntil && new Date(row.mfaLockedUntil as string) > new Date()) return { error: 'MFA_LOCKED' };
+      const step = matchTotp(decryptSecret(String(row.mfaSecretEnc)), code, Number(row.mfaLastStep));
+      if (step === null) {
+        const failed = Number(row.mfaFailedAttempts) + 1;
+        await tx`UPDATE users SET mfa_failed_attempts = ${failed},
+          mfa_locked_until = CASE WHEN ${failed} >= 5 THEN now() + interval '15 minutes' ELSE NULL END
+          WHERE tenant_id = ${u.tenantId} AND id = ${u.id}`;
+        return { error: failed >= 5 ? 'MFA_LOCKED' : 'INVALID_MFA_CODE' };
+      }
+      const [updated] = await tx`UPDATE users SET mfa_last_step = ${step},
+        mfa_failed_attempts = 0, mfa_locked_until = NULL
+        WHERE tenant_id = ${u.tenantId} AND id = ${u.id} RETURNING *`;
+      await audit(tx, u, 'auth.mfa_step_up', 'user', u.id, null, { method: 'totp' }, req.ip);
+      return { updated };
+    });
+    if ('error' in result) throw new AppError(result.error === 'MFA_LOCKED' ? 423 : 403,
+      result.error!, 'Verifikasi ulang autentikator gagal');
+    return issueToken(result.updated!, true);
+  });
+
   app.post('/api/v1/auth/logout-all', { onRequest: [app.authenticate] }, async (req) => {
     await app.sql`UPDATE users SET token_version = token_version + 1 WHERE id = ${req.authUser.id}`;
     await audit(app.sql, req.authUser, 'auth.logout_all', 'user', req.authUser.id, null, null, req.ip);
