@@ -85,6 +85,8 @@ jobs:
           NEXT_TELEMETRY_DISABLED: '1'
       - name: BFF HTTP authentication and CSRF smoke
         run: node tests/auth-bff-smoke.mjs
+      - name: UAT U01/U25 — missing backend returns clear 503
+        run: node tests/backend-not-configured-smoke.mjs
 
   dependency-audit:
     name: Dependency audit (production packages)
