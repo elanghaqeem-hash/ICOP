@@ -54,6 +54,7 @@ export const AI_FEATURES: Record<string, { label: string; area: string }> = {
   quotation_cover: { label: 'Draft pembuka surat penawaran', area: 'Quotation' },
   rks_summary: { label: 'Ringkas RKS/KAK (tempel teks)', area: 'AI Assistant' },
   rks_extraction: { label: 'Ekstraksi persyaratan RKS oleh AI', area: 'Tender Center' },
+  tender_compliance: { label: 'Saran kepatuhan tender (bukti VERIFIED, review manual)', area: 'Tender Center' },
   aanwijzing_questions: { label: 'Draft pertanyaan aanwijzing', area: 'Tender Center' },
   proposal_section: { label: 'Tulis ulang bagian proposal', area: 'Proposal Generator' },
   document_summary: { label: 'Ringkasan dokumen', area: 'Document Center' },
