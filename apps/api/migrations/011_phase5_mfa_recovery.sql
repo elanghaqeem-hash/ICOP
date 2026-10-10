@@ -8,7 +8,7 @@ CREATE TABLE mfa_recovery_requests (
   approved_by uuid REFERENCES users(id),
   reason text NOT NULL CHECK (length(trim(reason)) >= 20),
   status text NOT NULL DEFAULT 'PENDING'
-    CHECK (status IN ('PENDING','APPROVED','REJECTED')),
+    CHECK (status IN ('PENDING','APPROVED','REJECTED','EXPIRED')),
   created_at timestamptz NOT NULL DEFAULT now(),
   expires_at timestamptz NOT NULL DEFAULT (now() + interval '24 hours'),
   decided_at timestamptz,
