@@ -27,8 +27,8 @@ The new snapshot uses alternate browser auth (Fastify-set cookies) and TOTP reco
 
 | Feature from uploaded sources | Scope | State on this branch |
 |---|---|---|
-| Business calendar, public holidays, per-contract SLA | Schema + Jakarta time calculator, fallback policy, ticket pause/resume, admin and contract UI | **Implementation integrated in branch**, API regressions and UAT pending |
-| Credit notes (DPP + PPN, refund, maker-checker) | API + invoice UI + SoD + MFA recency + 5 PostgreSQL tests | **149/149 API tests PASS** on CI run [38043959718](https://github.com/elanghaqeem-hash/ICOP/actions/runs/38043959718); newest SLA additions require fresh CI |
+| Business calendar, public holidays, per-contract SLA | Schema + Jakarta time calculator, fallback policy, ticket pause/resume, admin and contract UI | **Implementation and 4 API regression tests PASS**, live staging UAT pending |
+| Credit notes (DPP + PPN, refund, maker-checker) | API + invoice UI + SoD + MFA recency + 5 PostgreSQL tests | **Implementation plus 5 API regression tests PASS**; final combined CI is [38044507793](https://github.com/elanghaqeem-hash/ICOP/actions/runs/38044507793) |
 | Full-text search indexes | document pages, proposal sections, tender requirements, verified facts | **Schema imported**, complete RAG UI pending |
 | Tender Assistant | readiness brief, grounded RKS QA, compliance suggestion review | Pending controlled transfer, grounding tests |
 | Customer chatbot and KB | deterministic per-customer data, public articles only, approval workflow, handoff to ticket | Pending; do not expose cross-customer data |
@@ -60,6 +60,14 @@ Release remains blocked by: live staging HTTPS and secrets, malware-scan/upload 
 - `apps/api/src/modules/helpdesk/routes.ts`: effective contract/tenant/default SLA is applied when tickets are opened or priority changes; P1/P2 default 24x7, P3/P4 default working hours. A paused ticket stops resolution breach checks until customer reply unpauses and extends resolution.
 - `/api/v1/helpdesk/calendar`, `/api/v1/helpdesk/holidays`, `/api/v1/contracts/:id/sla`: tenant-aware policy management and audit events.
 - UI: `/helpdesk/settings` and contract detail use source-informed SLA editor. Input must reflect the signed contract, never automatically assert the policy is legally valid.
-- `apps/api/tests/e2e.phase6.sla.test.ts`: weekend/holiday date vectors, admin authority, tenant calendar, contract SLA precedence, pause and resume (new tests on branch; CI outcome must be verified).
+- `apps/api/tests/e2e.phase6.sla.test.ts`: weekend/holiday date vectors, admin authority, tenant calendar, contract SLA precedence, pause and resume (4 tests passed in real PostgreSQL CI).
 
 **Regulatory reminder:** Default service windows are configurable product policies, not a contractual or regulatory assertion. Admin must verify Indonesian national holidays and joint leave against the approved official calendar for the period.
+
+## Verified GitHub integration test gate (10 Oct 2026)
+
+- CI [run 38044507793](https://github.com/elanghaqeem-hash/ICOP/actions/runs/38044507793), commit `3adb5080920831def4a3ab45705627601cb0ab26`: **SUCCESS, 4/4 jobs**.
+- **153/153 Vitest regressions pass, 14 suites**, no skipped tests, including 5 Phase 6 credit note and 4 Phase 6 SLA tests.
+- Web TypeScript / Next production build / BFF security HTTP smoke **PASS**, API typecheck & build **PASS**; both production dependency audits **PASS** at configured high/critical threshold.
+- This covers the explicitly integrated Phase 6A **credit note + effective SLA** slice only. The source snapshot's 206/206 self-reported tests cover additional modules not yet present in this repository; do not compare totals as though scopes were equal.
+- The current successful CI is not a real provider/staging load or security test, and cannot certify tax-compliance or accounting correctness without DEIT Finance sign-off.
