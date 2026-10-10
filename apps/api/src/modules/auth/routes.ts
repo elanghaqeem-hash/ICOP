@@ -15,7 +15,7 @@ const PasswordBody = z.object({
   newPassword: z.string().min(12).regex(/[A-Z]/, 'huruf besar').regex(/[a-z]/, 'huruf kecil').regex(/[0-9]/, 'angka').regex(/[^A-Za-z0-9]/, 'simbol'),
 });
 
-const CodeBody = z.object({ code: z.string().regex(/^\\d{6}$/, 'Kode autentikator wajib 6 digit') });
+const CodeBody = z.object({ code: z.string().regex(/^\d{6}$/, 'Kode autentikator wajib 6 digit') });
 const MAX_FAILED = 5;
 const LOCK_MINUTES = 15;
 
