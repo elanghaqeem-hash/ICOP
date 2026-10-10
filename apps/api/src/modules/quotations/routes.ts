@@ -6,6 +6,7 @@ import { badRequest, conflict, forbidden, notFound, unprocessable } from '../../
 import { idempotent } from '../../lib/idempotency.js';
 import { can } from '../../lib/rbac.js';
 import { approvalHandler, createApprovalRequest, decide, effectiveLevel, loadCurrentPolicy, supersedeOpenRequests } from '../approvals/engine.js';
+import { requireFreshApprovalMfa } from '../../lib/approval-mfa.js';
 import type { PricingPolicy } from '../pricing/policy-defaults.js';
 import type { PriceResult } from '../pricing/engine.js';
 import { renderQuotationHtml } from './render.js';
@@ -341,6 +342,7 @@ export async function quotationRoutes(app: FastifyInstance) {
       .refine((x) => x.decision === 'APPROVE' || (x.comment && x.comment.trim().length >= 5), { message: 'Alasan wajib diisi untuk Reject / Request Revision' })
       .parse(req.body);
     const u = req.authUser;
+    requireFreshApprovalMfa(u);
     return idempotent(req, reply, 200, () => decide(sql, u, id, b.decision, b.comment, req.ip, async (tx, ar, finalStatus) => {
       if (ar.entityType === 'bid_assessment') { await onBidDecision(tx, u, ar, finalStatus); return; }
       const h = approvalHandler(ar.entityType as string);
