@@ -47,7 +47,14 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq tesseract-ocr tesseract-ocr-ind ghostscript qpdf poppler-utils
           python3 -m pip install --quiet 'moto[server]>=5,<6'
+          echo "$(python3 -m site --user-base)/bin" >> "$GITHUB_PATH"
         working-directory: .
+      - name: Verify S3 emulator and PDF utilities are available
+        working-directory: .
+        run: |
+          command -v moto_server
+          command -v pdftoppm
+          command -v tesseract
       - run: npm ci
       - run: npm run typecheck
       - name: Run all regression suites (Phase 1–4)
