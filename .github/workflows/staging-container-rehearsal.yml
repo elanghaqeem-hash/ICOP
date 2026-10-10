@@ -76,8 +76,7 @@ jobs:
           test -s /tmp/icop-ci-staging.dump
           docker compose -f docker-compose.staging.yml exec -T postgres sh -c 'PGPASSWORD="$POSTGRES_PASSWORD" createdb -U "$POSTGRES_USER" icop_restore_ci'
           docker compose -f docker-compose.staging.yml exec -T postgres sh -c 'PGPASSWORD="$POSTGRES_PASSWORD" pg_restore -U "$POSTGRES_USER" -d icop_restore_ci' < /tmp/icop-ci-staging.dump
-          n="$(docker compose -f docker-compose.staging.yml exec -T postgres sh -c 'PGPASSWORD="$POSTGRES_PASSWORD" psql -U "$POSTGRES_USER" -d icop_restore_ci -Atqc "SELECT count(*) FROM schema_migrations WHERE name='''013_phase6_tender_suggestions.sql'''"')"
-          test "$n" = "1"
+          docker compose -f docker-compose.staging.yml exec -T postgres sh -c 'PGPASSWORD="$POSTGRES_PASSWORD" psql -U "$POSTGRES_USER" -d icop_restore_ci -Atqc "SELECT name FROM schema_migrations"' | grep -Fxq '013_phase6_tender_suggestions.sql'
           echo "PASS: explicit migration 013 survived backup/restore to isolated database"
       - name: Start API and frontend only after approved schema is present
         run: docker compose -f docker-compose.staging.yml up -d --wait api web
