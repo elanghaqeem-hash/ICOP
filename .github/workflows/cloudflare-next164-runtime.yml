@@ -53,7 +53,7 @@ jobs:
                 grep -q '"backend":"NOT_CONFIGURED"' /tmp/icop-status.json || { echo "FAIL: status must disclose backend NOT_CONFIGURED without secrets"; exit 1; }
                 LOGIN_CODE=$(curl -sS --max-time 8 -o /tmp/icop-auth.json -w '%{http_code}' -X POST -H "Origin: http://localhost:8787" -H "Content-Type: application/json" -d '{"tenant":"DEIT","email":"nobody@example.invalid","password":"invalid"}' http://localhost:8787/api/v1/auth/login)
                 test "$LOGIN_CODE" = "503" || { echo "FAIL: unconfigured backend must return 503, got $LOGIN_CODE"; cat /tmp/icop-auth.json; exit 1; }
-                grep -q '"code":"BACKEND_NOT_CONFIGURED"' /tmp/icop-auth.json || { echo "FAIL: backend readiness error code"; exit 1; }
+                grep -q '"code":"API_NOT_CONFIGURED"' /tmp/icop-auth.json || { echo "FAIL: backend readiness error code"; exit 1; }
                 echo "PASS: no-backend runtime returns explicit 503 and does not attempt localhost API"
                 exit 0
               fi
