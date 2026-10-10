@@ -2,7 +2,7 @@
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useState } from 'react';
-import { api, dt, idr, newKey } from '@/lib/api';
+import { api, ApiError, dt, idr, newKey } from '@/lib/api';
 import { Badge, ErrorBox, Field, Loading, PageHead, useAction, useApi, useMe } from '@/components/ui';
 
 export default function ApprovalDetail() {
@@ -10,11 +10,34 @@ export default function ApprovalDetail() {
   const me = useMe();
   const { data, error, loading, reload } = useApi(`/api/v1/approvals/${id}`);
   const [comment, setComment] = useState('');
+  const [pendingDecision, setPendingDecision] = useState<string | null>(null);
+  const [otp, setOtp] = useState('');
   const act = useAction();
   if (loading) return <Loading />;
   if (!data) return <ErrorBox error={error} />;
   const r = data.request; const q = data.entity; const s = r.summary;
-  const decide = (decision: string) => act.run(async () => { await api(`/api/v1/approvals/${id}/decide`, { body: { decision, comment: comment || undefined }, idempotencyKey: newKey() }); setComment(''); reload(); });
+  const decide = (decision: string) => act.run(async () => {
+    try {
+      await api(`/api/v1/approvals/${id}/decide`, {
+        body: { decision, comment: comment || undefined }, idempotencyKey: newKey(),
+      });
+      setPendingDecision(null); setOtp(''); setComment(''); reload();
+    } catch (error) {
+      if (error instanceof ApiError && error.code === 'MFA_STEP_UP_REQUIRED') {
+        setPendingDecision(decision);
+        return;
+      }
+      throw error;
+    }
+  });
+  const completeStepUp = () => act.run(async () => {
+    if (!pendingDecision || !/^\\d{6}$/.test(otp)) return;
+    await api('/api/v1/auth/mfa/step-up', { body: { code: otp } });
+    await api(`/api/v1/approvals/${id}/decide`, {
+      body: { decision: pendingDecision, comment: comment || undefined }, idempotencyKey: newKey(),
+    });
+    setPendingDecision(null); setOtp(''); setComment(''); reload();
+  });
   const canDecide = r.status === 'PENDING' && r.requestedBy !== me?.id; // kewenangan (termasuk delegasi) diverifikasi server
   return (
     <>
@@ -58,6 +81,20 @@ export default function ApprovalDetail() {
           <h2>Keputusan Anda</h2>
           <ErrorBox error={act.error} />
           <Field label="Catatan / alasan (wajib untuk tolak / minta revisi)"><textarea value={comment} onChange={(e) => setComment(e.target.value)} /></Field>
+          {pendingDecision && (
+            <div className="alert warn" style={{ marginBottom: 12 }}>
+              <p><strong>Konfirmasi keamanan diperlukan</strong></p>
+              <p>Masukkan kode baru dari aplikasi authenticator untuk memutuskan: <strong>{pendingDecision}</strong>.</p>
+              <Field label="Kode MFA (6 digit)">
+                <input inputMode="numeric" pattern="[0-9]{6}" maxLength={6} autoComplete="one-time-code"
+                  value={otp} onChange={(e) => setOtp(e.target.value.replace(/\\D/g, '').slice(0, 6))}/>
+              </Field>
+              <div className="row">
+                <button className="btn" disabled={act.busy || otp.length !== 6} onClick={completeStepUp}>Verifikasi & lanjutkan keputusan</button>
+                <button className="btn sec" onClick={() => { setPendingDecision(null); setOtp(''); }}>Batal</button>
+              </div>
+            </div>
+          )}
           <div className="row">
             <button className="btn ok" disabled={act.busy} onClick={() => decide('APPROVE')}>Setujui</button>
             <button className="btn sec" disabled={act.busy} onClick={() => decide('REQUEST_REVISION')}>Minta revisi</button>
