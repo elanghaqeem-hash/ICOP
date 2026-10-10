@@ -115,9 +115,12 @@ describe('Document Center — OCR, compression, limits, AI analysis', () => {
     const huge = Buffer.concat([Buffer.from('%PDF-1.4\n'), Buffer.alloc(51 * 1024 * 1024, 0x20)]);
     expect((await upload(T.presales, '/api/v1/documents', {}, huge, 'huge.pdf')).status).toBe(413);
     expect((await upload(T.presales, '/api/v1/documents', {}, Buffer.from('MZ binary'), 'x.exe', 'application/octet-stream')).status).toBe(400);
-    const ok = await upload(T.presales, '/api/v1/documents', { ocr: 'off', compress: 'none' }, await makeBlankPdf(300), 'max.pdf');
+    // One exact byte sequence for both uploads: pdf-lib creates variable metadata
+    // (e.g. CreationDate), so two separate PDF generations are not identical files.
+    const identicalPdf = await makeBlankPdf(300);
+    const ok = await upload(T.presales, '/api/v1/documents', { ocr: 'off', compress: 'none' }, identicalPdf, 'max.pdf');
     expect(ok.status).toBe(202);
-    expect((await upload(T.presales, '/api/v1/documents', {}, await makeBlankPdf(300), 'max-copy.pdf')).status).toBe(409);
+    expect((await upload(T.presales, '/api/v1/documents', {}, Buffer.from(identicalPdf), 'max-copy.pdf')).status).toBe(409);
   });
 
   it('OCRs an image-only (scanned) PDF and records compression', { timeout: 120_000 }, async () => {
