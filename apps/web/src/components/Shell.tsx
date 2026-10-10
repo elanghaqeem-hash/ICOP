@@ -22,6 +22,7 @@ const NAV = [
   { href: '/assistant', label: 'AI Assistant', ico: '✦', perm: 'ai.use', mobile: true },
   { href: '/vendors', label: 'Vendor & BOM', ico: '▣', perm: 'vendor.read', mobile: false },
   { href: '/settings', label: 'Kebijakan & AI', ico: '⚙', perm: 'policy.read', mobile: false },
+  { href: '/security/mfa-recovery', label: 'Pemulihan MFA', ico: '🔐', perm: 'user.manage', mobile: false },
   { href: '/audit', label: 'Audit trail', ico: '≡', perm: 'audit.read', mobile: false },
   { href: '/portal', label: 'Penawaran', ico: '▤', perm: 'portal.access', mobile: true },
   { href: '/portal/flexguard', label: 'FlexGuard', ico: '◈', perm: 'portal.access', mobile: true },
