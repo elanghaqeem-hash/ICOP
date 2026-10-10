@@ -104,3 +104,15 @@ Sumber baseline Phase 1–4 dan README Phase 5 berasal dari arsip yang diunggah 
 | 4C — tenant & recovery | Negative tests 8 modul dan proses recovery MFA dua administrator + audit | `docs/21-Phase5-Gate4C-Stepup-Tenant-Recovery.md` |
 
 **Terakhir diverifikasi:** 144 tes API lulus pada commit `8bfd99e8`, GitHub Actions [run 38040624016](https://github.com/elanghaqeem-hash/ICOP/actions/runs/38040624016) 4/4 PASS. Commit dokumentasi setelahnya perlu mengikuti CI terbaru. Ini **belum** persetujuan produksi; PR [#1](https://github.com/elanghaqeem-hash/ICOP/pull/1) masih Draft, belum di-merge. MFA recovery memerlukan dua admin yang masing-masing berhasil MFA; proses break-glass ketika keduanya kehilangan MFA masih memerlukan SOP resmi.
+
+## Phase 6 — Source Reconciliation (Staged PR)
+
+A separately uploaded Phase 6 source snapshot adds business-calendar and contract SLA, credit notes, tender assistant, customer chatbot, semantic search and accounting. Its original migrations `010–013` **collide** with Gate4B/4C MFA migrations `010–011`; do **not** overwrite PR #1 with the archive.
+
+- Integration branch: `feature/phase6-source-reconciliation` (stacked on `feature/phase5-source-integration`).
+- Implemented and verified in Gate6A: invoice credit notes (DPP/tax/refund, audit, maker-checker with fresh MFA), Jakarta business-calendar SLA, contract overrides, waiting-customer pause/resume, administrator and contract mobile editors, migration `012_phase6_sla_credit_rag.sql`.
+- Verified CI: [run 38044507793](https://github.com/elanghaqeem-hash/ICOP/actions/runs/38044507793), **4/4 PASS; 153/153 API tests** across 14 suites including nine new Phase 6 tests.
+- Remaining from source: tender AI, portal chatbot and KB, pgvector hybrid retrieval, double-entry accounting and connectors, production provider/UAT checks.
+- Reconciliation and scope controls: [docs/22-Phase6-Source-Reconciliation-Gate.md](docs/22-Phase6-Source-Reconciliation-Gate.md).
+
+**Not production ready.** Gate6A CI success establishes only tested source integration. Do not merge PR #5 or PR #1 until live HTTPS staging, finance validation, data/tenant security tests, independent penetration test and owner acceptance have passed.
