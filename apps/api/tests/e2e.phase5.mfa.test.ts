@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import type { FastifyInstance } from 'fastify';
 import type { Sql } from '../src/db.js';
 import { totpAt, matchTotp } from '../src/modules/auth/totp.js';
+import { requireFreshApprovalMfa, APPROVAL_STEP_UP_SECONDS } from '../src/lib/approval-mfa.js';
 import { SEED_PW, NEW_PW, freshDb, makeApp, api } from './helpers.js';
 
 let sql: Sql;
@@ -125,6 +126,31 @@ describe('Phase 5 Gate 4B: privileged MFA, anti-replay, tenant access', () => {
     expect(out.status).toBe(200);
     expect((await api(app, enrolledToken).get('/api/v1/customers')).status).toBe(401);
   });
+  it('enforces five-minute approval freshness and rotates server JWT on step-up', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const actor = {
+      id: 'fake-admin', tenantId: 'tenant-a', role: 'company_admin', email: 'approver@example.invalid',
+      fullName: 'Approver', customerId: null, tv: 1,
+      mfaEnrolled: true, mfaVerified: true, mfaAt: now - APPROVAL_STEP_UP_SECONDS - 1,
+    };
+    expect(() => requireFreshApprovalMfa(actor, now)).toThrow(/autentikator/);
+    expect(() => requireFreshApprovalMfa({ ...actor, mfaAt: now - 60 }, now)).not.toThrow();
+    expect(() => requireFreshApprovalMfa({ ...actor, mfaAt: now + 90 }, now)).toThrow();
+
+    // Test DB fixture only: separate from earlier anti-replay test to ensure a
+    // fresh authenticator step is available without waiting 30 seconds in CI.
+    await sql`UPDATE users SET mfa_last_step = -1, mfa_failed_attempts = 0,
+      mfa_locked_until = NULL WHERE email = 'companyadmin@defendit360.com'`;
+    const code = totpAt(secret, Math.floor(Date.now() / 30000));
+    const upgraded = await api(app, enrolledToken).post('/api/v1/auth/mfa/step-up', { code });
+    expect(upgraded.status).toBe(200);
+    expect(upgraded.body.mfaRequired).toBe(false);
+    const proof = app.jwt.verify<{ mfaAt: number; mfa: boolean }>(upgraded.body.token);
+    expect(proof.mfa).toBe(true);
+    expect(Math.abs(proof.mfaAt - now)).toBeLessThan(10);
+    expect((await api(app, enrolledToken).post('/api/v1/auth/mfa/step-up', { code })).status).toBe(403);
+  });
+
   it('rate-limits invalid TOTP and locks repeated attempts without leaking secret', async () => {
     // Separate this lockout assertion from the expected invalid replay attempt in
     // the prior test; every case starts with a clean local failure counter.
