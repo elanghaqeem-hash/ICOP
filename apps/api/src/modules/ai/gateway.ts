@@ -54,6 +54,7 @@ export const AI_FEATURES: Record<string, { label: string; area: string }> = {
   quotation_cover: { label: 'Draft pembuka surat penawaran', area: 'Quotation' },
   rks_summary: { label: 'Ringkas RKS/KAK (tempel teks)', area: 'AI Assistant' },
   rks_extraction: { label: 'Ekstraksi persyaratan RKS oleh AI', area: 'Tender Center' },
+  tender_compliance: { label: 'Saran kepatuhan tender (bukti VERIFIED, review manual)', area: 'Tender Center' },
   aanwijzing_questions: { label: 'Draft pertanyaan aanwijzing', area: 'Tender Center' },
   proposal_section: { label: 'Tulis ulang bagian proposal', area: 'Proposal Generator' },
   document_summary: { label: 'Ringkasan dokumen', area: 'Document Center' },
@@ -66,11 +67,18 @@ export class AiDisabledError extends Error {
   constructor(public feature: string) { super(`Fitur AI "${AI_FEATURES[feature]?.label ?? feature}" dinonaktifkan oleh admin`); }
 }
 
-/** Default: aktif bila tidak ada baris konfigurasi. health_check selalu diizinkan. */
+/** Sensitive, newly integrated AI features are opt-in for each tenant. */
+export const AI_OPT_IN_FEATURES = new Set(['tender_compliance']);
+export function aiFeatureDefaultEnabled(feature: string): boolean {
+  return !AI_OPT_IN_FEATURES.has(feature);
+}
 export async function featureEnabled(sql: Sql, tenantId: string, feature: string) {
   if (feature === 'health_check') return true;
   const rows = await sql`SELECT feature, enabled FROM ai_features WHERE tenant_id = ${tenantId} AND feature IN ('global', ${feature})`;
-  return !rows.some((r) => r.enabled === false);
+  if (rows.some((r) => r.enabled === false)) return false;
+  return AI_OPT_IN_FEATURES.has(feature)
+    ? rows.some((r) => r.feature === feature && r.enabled === true)
+    : true;
 }
 
 /** Sumber API key: database terenkripsi (form admin) → fallback environment. */

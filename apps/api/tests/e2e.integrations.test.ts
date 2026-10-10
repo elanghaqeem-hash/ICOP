@@ -93,10 +93,11 @@ async function startMoto() {
 }
 let s3Ready = false;
 
+let contractFixtureSeq = 0; // Stable unique IDs across all VIDA/Privy fixtures.
 async function contractToSignature(title: string, withFinalPdf: boolean) {
   const salesId = (await api(app, T.sales).get('/api/v1/auth/me')).body.id;
   const [c] = await sql`INSERT INTO contracts (tenant_id, number, customer_id, contract_type, title, value, tax_rate, start_date, end_date, payment_terms, status, legal_checklist, created_by)
-    VALUES (${ctx.tenantId}, ${`9${Math.floor(Math.random() * 90 + 10)}/DEIT-PKS/X/2026`}, ${ctx.customerId}, 'PROJECT', ${title}, 120000000, 11, '2026-11-01', '2027-10-31',
+    VALUES (${ctx.tenantId}, ${`E2E-ESIGN-${++contractFixtureSeq}/DEIT-PKS/X/2026`}, ${ctx.customerId}, 'PROJECT', ${title}, 120000000, 11, '2026-11-01', '2027-10-31',
             '30% DP, 70% BAST', 'DRAFT', ${sql.json({})}, ${salesId}) RETURNING id`;
   if (withFinalPdf) {
     const mp = multipart({}, { name: 'file', filename: 'pks-final.pdf', content: await makeRksPdf(), type: 'application/pdf' });
