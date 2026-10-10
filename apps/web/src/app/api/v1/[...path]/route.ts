@@ -48,7 +48,7 @@ async function proxy(request: NextRequest, context: Context): Promise<NextRespon
   const suffix = path.join('/');
   const login = suffix === 'auth/login' && request.method === 'POST';
   const changePassword = suffix === 'auth/change-password' && request.method === 'POST';
-  const mfaFinish = (suffix === 'auth/mfa/enable' || suffix === 'auth/mfa/verify') && request.method === 'POST';
+  const mfaFinish = (suffix === 'auth/mfa/enable' || suffix === 'auth/mfa/verify' || suffix === 'auth/mfa/step-up') && request.method === 'POST';
   const logout = suffix === 'auth/logout' && request.method === 'POST';
   const logoutAll = suffix === 'auth/logout-all' && request.method === 'POST';
   // The public e-sign webhook is authenticated upstream with a provider HMAC.
