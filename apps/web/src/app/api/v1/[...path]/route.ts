@@ -10,7 +10,8 @@ const production = process.env.NODE_ENV === 'production';
 const SESSION = production ? '__Host-icop-session' : 'icop-dev-session';
 const CSRF = production ? '__Host-icop-csrf' : 'icop-dev-csrf';
 const MAX_AGE = 8 * 60 * 60;
-const API_ORIGIN = process.env.API_INTERNAL_URL ?? 'http://localhost:3001';
+// Production must never silently proxy credentials to loopback when the API is missing.
+const API_ORIGIN = process.env.API_INTERNAL_URL?.trim() || (production ? null : 'http://localhost:3001');
 type Context = { params: Promise<{ path: string[] }> };
 const methodsWithoutBody = new Set(['GET', 'HEAD']);
 
@@ -77,8 +78,10 @@ async function proxy(request: NextRequest, context: Context): Promise<NextRespon
   const token = request.cookies.get(SESSION)?.value;
   if (!token && !login && !webhook) return error(401, 'UNAUTHENTICATED');
 
-  const url = new URL(API_ORIGIN);
-  if (!['https:', 'http:'].includes(url.protocol)) return error(500, 'API_ORIGIN_INVALID');
+  if (!API_ORIGIN) return error(503, 'API_NOT_CONFIGURED');
+  let url: URL;
+  try { url = new URL(API_ORIGIN); } catch { return error(503, 'API_ORIGIN_INVALID'); }
+  if (!['https:', 'http:'].includes(url.protocol)) return error(503, 'API_ORIGIN_INVALID');
   url.pathname = '/api/v1/' + path.map(encodeURIComponent).join('/');
   url.search = request.nextUrl.search;
   const headers = new Headers();
