@@ -102,7 +102,7 @@ try {
 
   const change = await send('/api/v1/auth/change-password', 'POST', { cookie, csrf, body: '{}' });
   assert.equal(change.status, 200);
-  assert.deepEqual(await change.json(), { ok: true });
+  assert.deepEqual(await change.json(), { ok: true, mfaRequired: false, mfaEnrolled: false });
   const rotated = fromCookies(change);
   assert.equal(extract(rotated, '__Host-icop-session'), 'rotated-jwt');
   const rotatedCsrf = extract(rotated, '__Host-icop-csrf');
