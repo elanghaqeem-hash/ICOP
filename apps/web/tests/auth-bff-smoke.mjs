@@ -15,8 +15,16 @@ const mock = createServer(async (req, res) => {
   const body = Buffer.concat(chunks);
   calls.push({ path: req.url, method: req.method, headers: req.headers, body });
   res.setHeader('content-type', 'application/json');
-  if (req.url === '/api/v1/auth/login') res.end(JSON.stringify({ token: 'server-only-jwt', user }));
+  if (req.url === '/api/v1/auth/login') {
+    const isMfa = body.toString().includes('mfa@example.invalid');
+    res.end(JSON.stringify(isMfa
+      ? { token: 'challenge-only-jwt', user: { ...user, email: 'mfa@example.invalid' }, mfaRequired: true, mfaEnrolled: true }
+      : { token: 'server-only-jwt', user }));
+  }
   else if (req.url === '/api/v1/auth/change-password') res.end(JSON.stringify({ token: 'rotated-jwt' }));
+  else if (req.url === '/api/v1/auth/mfa/verify') res.end(JSON.stringify({
+    token: 'verified-jwt', user: { ...user, email: 'mfa@example.invalid' }, mfaRequired: false, mfaEnrolled: true,
+  }));
   else if (req.url === '/api/v1/auth/me') res.end(JSON.stringify({ ...user, permissions: ['dashboard.read'] }));
   else if (req.url === '/api/v1/reports/export') {
     res.setHeader('content-type', 'text/csv');
@@ -112,12 +120,33 @@ try {
   const noSession = await send('/api/v1/auth/me', 'GET');
   assert.equal(noSession.status, 401);
 
+  // A password-only MFA challenge must remain inside the httpOnly cookie.
+  const mfaLogin = await send('/api/v1/auth/login', 'POST',
+    { body: JSON.stringify({ email: 'mfa@example.invalid', password: 'placeholder' }) });
+  assert.equal(mfaLogin.status, 200);
+  const mfaLoginBody = await mfaLogin.json();
+  assert.equal(mfaLoginBody.mfaRequired, true);
+  assert.equal(mfaLoginBody.mfaEnrolled, true);
+  assert.ok(!('token' in mfaLoginBody), 'pre-MFA token leaked to browser');
+  const mfaCookie = fromCookies(mfaLogin);
+  const mfaCsrf = extract(mfaCookie, '__Host-icop-csrf');
+  const complete = await send('/api/v1/auth/mfa/verify', 'POST',
+    { cookie: mfaCookie, csrf: mfaCsrf, body: JSON.stringify({ code: '123456' }) });
+  assert.equal(complete.status, 200);
+  const completeBody = await complete.json();
+  assert.equal(completeBody.mfaRequired, false);
+  assert.ok(!('token' in completeBody), 'verified JWT leaked to browser');
+  const verifiedCookie = fromCookies(complete);
+  assert.equal(extract(verifiedCookie, '__Host-icop-session'), 'verified-jwt');
+  await send('/api/v1/auth/me', 'GET', { cookie: verifiedCookie });
+  assert.equal(calls.at(-1).headers.authorization, 'Bearer verified-jwt');
+
   const webhook = await send('/api/v1/esign/webhook/sandbox', 'POST',
     { origin: '', type: 'application/json', body: '{"event":"SIGNED"}', extra: { 'x-signature': 'test-hmac' } });
   assert.equal(webhook.status, 200);
   assert.equal(calls.at(-1).headers['x-signature'], 'test-hmac');
   assert.ok(!calls.at(-1).headers.authorization, 'webhook should not reuse browser cookie');
-  console.log('BFF HTTP security smoke PASS (login, credentials, csrf, upload, download, rotation, logout-all, webhook)');
+  console.log('BFF HTTP security smoke PASS (login, credentials, csrf, upload, download, rotation, logout-all, MFA challenge, webhook)');
 } finally {
   next.kill('SIGTERM');
   await new Promise((r) => setTimeout(r, 200));
