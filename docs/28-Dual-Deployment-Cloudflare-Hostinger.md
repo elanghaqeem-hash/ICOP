@@ -21,7 +21,7 @@ Cloudflare Workers can serve the current Next.js frontend. The existing Fastify/
 
 The current public Cloudflare frontend has no `API_INTERNAL_URL`, and `/api/system/status` has reported `backend: NOT_CONFIGURED`. Do not test actual user credentials there until a secured staging API and Access restrictions are set up.
 
-The GitHub `main` branch is the source-release baseline for Hostinger, while `develop` should hold Cloudflare changes once created and configured. Promotion flow: feature PR -> develop (Cloudflare) -> reviewed release PR -> main -> approved VPS release. A successful build is not a UAT sign-off.
+The GitHub `main` branch is the source-release baseline for Hostinger. The `develop` branch was created and Cloudflare Builds was switched to watch `develop` on 2026-10-11 (API verified). Promotion flow: feature PR -> develop (Cloudflare) -> reviewed release PR -> main -> approved VPS release. A successful build is not a UAT sign-off.
 
 ## Option 1: Development on Cloudflare
 
@@ -29,11 +29,11 @@ The existing development URL is:
 
 `https://icop.elang-haqeem.workers.dev/login`
 
-The actual Worker is named `icop`. Its Cloudflare Builds root is `apps/web`, build command is `npm ci && npm run build:cloudflare` (includes the Next.js 16.4 `preview-props.json` manifest patch), and its automatic deployment command should remain `npx wrangler deploy --dry-run` until a controlled manual development build is chosen. Never click Retry on historic failed builds.
+The actual Worker is named `icop`. Cloudflare Builds **now watches `develop`**, root `apps/web`, build command `npm ci && npm run build:cloudflare` (including the Next.js 16.4 `preview-props.json` manifest patch). Its auto-deploy remains `npx wrangler deploy --dry-run` and the last published Worker version has not been automatically replaced. Never click Retry on historic failed builds.
 
 Follow-up operator actions:
 1. Configure Cloudflare Access/restrict access before introducing real-looking staging identities or tenant data.
-2. Create an independent `develop` Git branch, and then switch this Worker **development build source** to `develop` with verified trigger configuration. Do not redirect Hostinger production to the development URL.
+2. **Completed (2026-10-11):** Created `develop` from the approved `main` source and changed the Cloudflare Worker build branch and trigger to `develop` (both HTTP 200, verified). Keep Hostinger production on `main`; do not redirect production DNS to the development URL.
 3. Provision a nonproduction API with separate PostgreSQL and distinct JWT, secrets master key, storage and SMTP sandbox. Use only a reachable private gateway or secured HTTPS `API_INTERNAL_URL`, not localhost. Verify BFF Origin/MFA/cookies.
 4. Run local Wrangler runtime smoke and the existing staging container rehearsal, then manual dev deployment and UAT U01–U26.
 
