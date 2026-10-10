@@ -1,0 +1,68 @@
+name: ICOP Cloudflare runtime fix - Next 16.4 (no deploy)
+
+on:
+  push:
+    branches:
+      - fix/cloudflare-next164-preview-manifest
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  worker-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - name: Install exact locked dependencies
+        run: npm ci
+      - name: Include Next.js 16.4 preview-props manifest
+        run: node scripts/patch-opennext-next164-preview-props.mjs
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Build Cloudflare Worker
+        run: npx opennextjs-cloudflare build
+      - name: Validate worker bundle without deploying
+        run: npx wrangler deploy --dry-run
+      - name: Local runtime GET /login smoke (detect Error 1101)
+        shell: bash
+        run: |
+          set -uo pipefail
+          npx wrangler dev --local --port 8787 --ip 127.0.0.1 > /tmp/icop-wrangler.log 2>&1 &
+          WORKER_PID=$!
+          trap 'kill $WORKER_PID 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 40); do
+            HTTP_CODE=$(curl -sS --max-time 4 -o /tmp/icop-login.html -w '%{http_code}' http://127.0.0.1:8787/login 2>/dev/null || true)
+            if [ "$HTTP_CODE" = "200" ]; then
+              if grep -Eiq 'login|sign in|masuk|icop' /tmp/icop-login.html; then
+                echo "PASS: /login returned HTML 200"
+                exit 0
+              fi
+              echo "Response was 200 but expected login content missing"
+              break
+            fi
+            if [ "$HTTP_CODE" = "500" ] || [ "$HTTP_CODE" = "1101" ]; then
+              echo "Runtime returned $HTTP_CODE"
+              break
+            fi
+            if ! kill -0 "$WORKER_PID" 2>/dev/null; then
+              echo "Wrangler local runtime exited"
+              break
+            fi
+            sleep 2
+          done
+          echo "FAIL: GET /login did not return expected HTML 200"
+          tail -n 100 /tmp/icop-wrangler.log
+          exit 1
