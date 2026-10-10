@@ -56,7 +56,7 @@ beforeAll(async()=>{
  tenderB=second.id;
  await sql`INSERT INTO tender_documents(tenant_id,tender_id,kind,filename,mime,size_bytes,sha256,storage_path,extraction_status,extracted_text)
   VALUES(${b.id},${tenderB},'RKS','RKS Tenant B.pdf','application/pdf',50,
-    ${'b'.repeat(64)},'/tenant-b/rks.pdf','DONE','Rahasia harga vendor Beta 4321 persen',2)`;
+    ${'b'.repeat(64)},'/tenant-b/rks.pdf','DONE','Rahasia harga vendor Beta 4321 persen')`;
  const loginB=await app.inject({method:'POST',url:'/api/v1/auth/login',
    payload:{tenant:'SRCB',email:'tender-b@example.invalid',password:NEW_PW}});
  if(loginB.statusCode!==200)throw new Error(loginB.body);
