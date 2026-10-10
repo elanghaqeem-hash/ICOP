@@ -226,6 +226,87 @@ export async function helpdeskRoutes(app: FastifyInstance) {
     });
   });
 
+  /* Phase 6 source — Jakarta business hours, holidays, customer contract SLA. */
+  const ADMIN = requirePerm('integration.admin');
+
+  app.put('/api/v1/helpdesk/calendar', { ...auth, preValidation: ADMIN }, async (req) => {
+    const b = z.object({
+      start: z.string().regex(/^([01][0-9]|2[0-3]):[0-5][0-9]$/),
+      end: z.string().regex(/^([01][0-9]|2[0-3]):[0-5][0-9]$/),
+      weekdays: z.array(z.number().int().min(1).max(7)).min(1).max(7),
+    }).parse(req.body);
+    const minutes = (t: string) => Number(t.slice(0,2))*60+Number(t.slice(3));
+    if(minutes(b.end)<=minutes(b.start))throw badRequest('Jam selesai harus setelah jam mulai');
+    const u=req.authUser, days=[...new Set(b.weekdays)].sort();
+    await sql`INSERT INTO business_calendar(tenant_id,start_minute,end_minute,weekdays)
+      VALUES (${u.tenantId},${minutes(b.start)},${minutes(b.end)},${days})
+      ON CONFLICT(tenant_id) DO UPDATE SET
+        start_minute=EXCLUDED.start_minute,end_minute=EXCLUDED.end_minute,weekdays=EXCLUDED.weekdays`;
+    await audit(sql,u,'sla.calendar_update','business_calendar',null,null,b,req.ip);
+    return { ok:true };
+  });
+
+  app.get('/api/v1/helpdesk/holidays', { ...auth, preValidation: R }, async (req) => {
+    const rows=await sql`SELECT to_char(day,'YYYY-MM-DD') AS day,name FROM holidays
+      WHERE tenant_id=${req.authUser.tenantId} AND day >= current_date - 30 ORDER BY day`;
+    return {items:rows};
+  });
+
+  app.post('/api/v1/helpdesk/holidays', { ...auth, preValidation: ADMIN }, async(req,reply)=>{
+    const b=z.object({day:z.string().date(),name:z.string().trim().min(3).max(120)}).parse(req.body);
+    await sql`INSERT INTO holidays(tenant_id,day,name)
+      VALUES (${req.authUser.tenantId},${b.day},${b.name})
+      ON CONFLICT(tenant_id,day) DO UPDATE SET name=EXCLUDED.name`;
+    await audit(sql,req.authUser,'sla.holiday_add','holidays',null,null,b,req.ip);
+    reply.code(201);return b;
+  });
+
+  app.delete('/api/v1/helpdesk/holidays/:day', { ...auth, preValidation: ADMIN }, async(req)=>{
+    const {day}=z.object({day:z.string().date()}).parse(req.params);
+    const [removed]=await sql`DELETE FROM holidays WHERE tenant_id=${req.authUser.tenantId}
+      AND day=${day} RETURNING day`;
+    if(!removed)throw notFound('Hari libur');
+    await audit(sql,req.authUser,'sla.holiday_delete','holidays',null,null,{day},req.ip);
+    return {ok:true};
+  });
+
+  app.get('/api/v1/contracts/:id/sla',
+    { ...auth, preValidation: requirePerm('contract.read') }, async(req)=>{
+    const {id}=z.object({id:z.string().uuid()}).parse(req.params);
+    const [c]=await sql`SELECT id FROM contracts WHERE id=${id} AND tenant_id=${req.authUser.tenantId}`;
+    if(!c)throw notFound('Kontrak');
+    const rows=await sql`SELECT priority,response_minutes AS response,
+      resolution_minutes AS resolution,calendar FROM contract_sla
+      WHERE contract_id=${id} AND tenant_id=${req.authUser.tenantId} ORDER BY priority`;
+    return {items:rows};
+  });
+
+  app.put('/api/v1/contracts/:id/sla',
+    { ...auth, preValidation: requirePerm('contract.write') }, async(req)=>{
+    const {id}=z.object({id:z.string().uuid()}).parse(req.params);
+    const b=z.object({items:z.array(z.object({
+      priority:z.enum(PRIORITIES),response:z.number().int().min(1).max(10080),
+      resolution:z.number().int().min(1).max(43200),
+      calendar:z.enum(['24x7','BUSINESS']),
+    })).max(4)}).parse(req.body);
+    if(new Set(b.items.map(i=>i.priority)).size!==b.items.length)throw badRequest('Prioritas duplikat');
+    for(const item of b.items)if(item.resolution<item.response)
+      throw badRequest(`${item.priority}: target resolusi harus ≥ respons`);
+    const u=req.authUser;
+    return sql.begin(async(tx)=>{
+      const [c]=await tx`SELECT id FROM contracts WHERE id=${id}
+        AND tenant_id=${u.tenantId} FOR UPDATE`;
+      if(!c)throw notFound('Kontrak');
+      await tx`DELETE FROM contract_sla WHERE contract_id=${id} AND tenant_id=${u.tenantId}`;
+      for(const item of b.items){
+        await tx`INSERT INTO contract_sla(tenant_id,contract_id,priority,response_minutes,resolution_minutes,calendar)
+          VALUES(${u.tenantId},${id},${item.priority},${item.response},${item.resolution},${item.calendar})`;
+      }
+      await audit(tx,u,'contract.sla_update','contract',id,null,b.items,req.ip);
+      return {ok:true,count:b.items.length};
+    });
+  });
+
   /* ───── Portal customer ───── */
   app.get('/api/v1/portal/tickets', portal, async (req) => {
     const u = req.authUser;
