@@ -1,0 +1,50 @@
+# ICOP CyberBusiness 360 — GitLab CI
+stages: [verify, test, build, security]
+
+variables:
+  POSTGRES_DB: icop_test
+  POSTGRES_USER: icop_app
+  POSTGRES_PASSWORD: ci_password
+  TEST_DATABASE_URL: postgres://icop_app:ci_password@postgres:5432/icop_test
+  LOGIN_RATE_LIMIT: "1000"
+
+.node: &node
+  image: node:22-alpine
+  cache:
+    key: { files: [apps/api/package-lock.json, apps/web/package-lock.json] }
+    paths: [apps/api/node_modules, apps/web/node_modules]
+
+typecheck:
+  <<: *node
+  stage: verify
+  script:
+    - cd apps/api && npm ci && npm run typecheck
+    - cd ../web && npm ci && npm run typecheck
+
+api-tests:
+  <<: *node
+  stage: test
+  services: [postgres:16-alpine]
+  script:
+    - cd apps/api && npm ci && npm test
+  artifacts:
+    when: always
+    expire_in: 14 days
+
+web-build:
+  <<: *node
+  stage: build
+  script:
+    - cd apps/web && npm ci && npm run build
+
+dependency-audit:
+  <<: *node
+  stage: security
+  allow_failure: true   # jadikan blocking sebelum produksi
+  script:
+    - cd apps/api && npm audit --omit=dev --audit-level=high
+    - cd ../web && npm audit --omit=dev --audit-level=high
+
+include:
+  - template: Jobs/Secret-Detection.gitlab-ci.yml
+  - template: Jobs/SAST.gitlab-ci.yml
