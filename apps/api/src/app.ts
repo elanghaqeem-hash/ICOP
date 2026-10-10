@@ -42,7 +42,7 @@ export interface BuildOptions { sql?: Sql; logger?: boolean; aiFetch?: FetchLike
 const PASSWORD_CHANGE_ALLOWED = new Set(['/api/v1/auth/me', '/api/v1/auth/change-password', '/api/v1/auth/logout-all']);
 const MFA_CHALLENGE_ALLOWED = new Set([
   '/api/v1/auth/me', '/api/v1/auth/logout-all', '/api/v1/auth/change-password',
-  '/api/v1/auth/mfa/setup', '/api/v1/auth/mfa/enable', '/api/v1/auth/mfa/verify',
+  '/api/v1/auth/mfa/setup', '/api/v1/auth/mfa/enable', '/api/v1/auth/mfa/verify', '/api/v1/auth/mfa/step-up',
 ]);
 
 export async function buildApp(opts: BuildOptions = {}) {
@@ -75,7 +75,7 @@ export async function buildApp(opts: BuildOptions = {}) {
 
   app.decorate('authenticate', async (req) => {
     let payload;
-    try { payload = await req.jwtVerify<{ sub: string; tid: string; tv: number; role: string; mfa?: boolean; purpose?: string }>(); } catch { throw new AppError(401, 'UNAUTHENTICATED', 'Sesi tidak valid atau kedaluwarsa'); }
+    try { payload = await req.jwtVerify<{ sub: string; tid: string; tv: number; role: string; mfa?: boolean; mfaAt?: number; purpose?: string }>(); } catch { throw new AppError(401, 'UNAUTHENTICATED', 'Sesi tidak valid atau kedaluwarsa'); }
     const [u] = await sql`SELECT id, tenant_id, role, email, full_name, customer_id, token_version, is_active,
                                  force_password_change, mfa_enabled
                           FROM users WHERE id = ${payload.sub} AND tenant_id = ${payload.tid}`;
@@ -94,7 +94,8 @@ export async function buildApp(opts: BuildOptions = {}) {
     }
     req.authUser = { id: u.id as string, tenantId: u.tenantId as string, role: u.role as string, email: u.email as string,
       fullName: u.fullName as string, customerId: (u.customerId as string) ?? null, tv: u.tokenVersion as number,
-      mfaEnrolled: enrolled, mfaVerified: needed ? verified : !payload.purpose };
+      mfaEnrolled: enrolled, mfaVerified: needed ? verified : !payload.purpose,
+      mfaAt: verified && Number.isFinite(payload.mfaAt) ? Number(payload.mfaAt) : undefined };
   });
 
   app.setErrorHandler((err: FastifyError | AppError | ZodError, req, reply) => {
