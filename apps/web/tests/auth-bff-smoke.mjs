@@ -64,6 +64,7 @@ try {
   if (badOrigin.status !== 403) console.error('BFF origin check diagnostic:', badOrigin.status, await badOrigin.clone().text(), stdout);
   assert.equal(badOrigin.status, 403);
   const login = await send('/api/v1/auth/login', 'POST', { body: JSON.stringify({ email: user.email, password: 'placeholder' }) });
+  if (login.status !== 200) console.error('BFF login diagnostic:', login.status, await login.clone().text(), stdout);
   assert.equal(login.status, 200);
   const data = await login.json();
   assert.equal(data.user.id, user.id);
