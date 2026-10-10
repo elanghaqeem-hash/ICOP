@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { audit, requirePerm } from '../../lib/context.js';
 import { AppError, notFound } from '../../lib/errors.js';
-import { AI_FEATURES, AiUnavailableError, breakerState, complete, listProviders, resetBreaker, resolveKey } from './gateway.js';
+import { AI_FEATURES, aiFeatureDefaultEnabled, AiUnavailableError, breakerState, complete, listProviders, resetBreaker, resolveKey } from './gateway.js';
 import { encryptSecret, fingerprint, last4 } from '../../lib/secrets.js';
 import { PROVIDER_DEFAULTS, type FetchLike, type ProviderName } from './providers.js';
 
@@ -102,8 +102,8 @@ export async function aiRoutes(app: FastifyInstance, opts: { fetchImpl?: FetchLi
                            WHERE f.tenant_id = ${req.authUser.tenantId}`;
     const map = Object.fromEntries(rows.map((r) => [r.feature, r]));
     const globalOn = map.global?.enabled !== false;
-    return { items: Object.entries(AI_FEATURES).map(([feature, meta]) => ({ feature, ...meta, enabled: map[feature]?.enabled !== false,
-      effective: feature === 'global' ? globalOn : globalOn && map[feature]?.enabled !== false, updatedAt: map[feature]?.updatedAt ?? null, updatedByName: map[feature]?.updatedByName ?? null })) };
+    return { items: Object.entries(AI_FEATURES).map(([feature, meta]) => ({ feature, ...meta, enabled: map[feature]?.enabled ?? aiFeatureDefaultEnabled(feature),
+      effective: feature === 'global' ? globalOn : globalOn && (map[feature]?.enabled ?? aiFeatureDefaultEnabled(feature)), updatedAt: map[feature]?.updatedAt ?? null, updatedByName: map[feature]?.updatedByName ?? null })) };
   });
 
   app.put('/api/v1/ai/features', { ...auth, preValidation: requirePerm('ai.admin') }, async (req) => {
