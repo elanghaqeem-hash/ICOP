@@ -38,7 +38,12 @@ export default function TenderComplianceReview({tenderId,afterDecision}:{
    <p className="sub">AI hanya membandingkan persyaratan administratif, kualifikasi, dan teknis dengan fakta perusahaan VERIFIED yang masih berlaku. Harga/komersial tidak dinilai. Hasil bukan keputusan final dan tidak otomatis mengubah compliance matrix.</p>
    <ErrorBox error={error}/><ErrorBox error={run.error}/>
    {message&&<div className="alert ok">{message}</div>}
-   {canSuggest&&<button type="button" className="btn pur" disabled={run.busy}
+   {data?.enabled===false&&<div className="alert warn">
+     Fitur analisis kepatuhan AI belum diaktifkan untuk perusahaan ini.
+     Admin harus mengaktifkan `tender_compliance` di pengaturan fitur AI
+     setelah pemeriksaan sumber, provider, dan kebijakan data.
+   </div>}
+   {canSuggest&&data?.enabled===true&&<button type="button" className="btn pur" disabled={run.busy}
      onClick={create}>{run.busy?'Memproses…':'Buat saran berdasarkan bukti VERIFIED'}</button>}
    {loading?<Loading/>:<>
      <p className="sub" style={{marginTop:10}}>Menunggu keputusan: <strong>{data?.items?.length??0}</strong> · Persetujuan wajib dilakukan petugas yang berbeda dari pengaju.</p>
