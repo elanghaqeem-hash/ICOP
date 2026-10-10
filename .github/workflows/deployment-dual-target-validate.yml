@@ -54,9 +54,8 @@ jobs:
           bash infra/hostinger/deploy.sh preflight
           docker compose --env-file infra/hostinger/.env.production -f docker-compose.hostinger.yml config --quiet
           docker compose --env-file infra/hostinger/.env.production -f docker-compose.hostinger.yml config --format json |
-            jq -e '[.services.postgres, .services.api, .services.web] | all(.ports == null)' >/dev/null
-          docker compose --env-file infra/hostinger/.env.production -f docker-compose.hostinger.yml config --format json |
-            jq -e '.services.migrate.profiles | index("migration") != null' >/dev/null
+            jq -e '.services | ((.postgres.ports // []) | length == 0) and ((.api.ports // []) | length == 0) and ((.web.ports // []) | length == 0)' >/dev/null
+          docker compose --env-file infra/hostinger/.env.production -f docker-compose.hostinger.yml config --profiles | grep -Fxq migration
       - name: Validate Caddy production HTTPS configuration
         run: |
           docker run --rm -e ICOP_DOMAIN=ci-icop.invalid -e ACME_EMAIL=ci@validation.invalid             -v "$PWD/infra/hostinger/Caddyfile:/etc/caddy/Caddyfile:ro"             caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
