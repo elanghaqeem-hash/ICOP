@@ -121,11 +121,6 @@ describe('Phase 5 Gate 4B: privileged MFA, anti-replay, tenant access', () => {
     expect((await other.get('/api/v1/customers')).body.items).toEqual([]);
   });
 
-  it('revokes all sessions on logout-all, including verified MFA tokens', async () => {
-    const out = await api(app, enrolledToken).post('/api/v1/auth/logout-all');
-    expect(out.status).toBe(200);
-    expect((await api(app, enrolledToken).get('/api/v1/customers')).status).toBe(401);
-  });
   it('enforces five-minute approval freshness and rotates server JWT on step-up', async () => {
     const now = Math.floor(Date.now() / 1000);
     const actor = {
@@ -151,6 +146,11 @@ describe('Phase 5 Gate 4B: privileged MFA, anti-replay, tenant access', () => {
     expect((await api(app, enrolledToken).post('/api/v1/auth/mfa/step-up', { code })).status).toBe(403);
   });
 
+  it('revokes all sessions on logout-all, including verified MFA tokens', async () => {
+    const out = await api(app, enrolledToken).post('/api/v1/auth/logout-all');
+    expect(out.status).toBe(200);
+    expect((await api(app, enrolledToken).get('/api/v1/customers')).status).toBe(401);
+  });
   it('rate-limits invalid TOTP and locks repeated attempts without leaking secret', async () => {
     // Separate this lockout assertion from the expected invalid replay attempt in
     // the prior test; every case starts with a clean local failure counter.
