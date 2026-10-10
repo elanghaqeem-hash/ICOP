@@ -11,6 +11,8 @@ export interface AuthUser {
   fullName: string;
   customerId: string | null;
   tv: number;
+  mfaEnrolled?: boolean;
+  mfaVerified?: boolean;
 }
 
 declare module 'fastify' {
@@ -25,7 +27,7 @@ declare module 'fastify' {
 
 declare module '@fastify/jwt' {
   interface FastifyJWT {
-    payload: { sub: string; tid: string; role: string; tv: number; pwc?: boolean };
+    payload: { sub: string; tid: string; role: string; tv: number; pwc?: boolean; mfa?: boolean; purpose?: string };
   }
 }
 
