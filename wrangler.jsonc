@@ -1,0 +1,23 @@
+{
+  "$schema": "apps/web/node_modules/wrangler/config-schema.json",
+  // Fallback for Cloudflare Builds configured at the repository root.
+  // For monorepos, prefer root directory apps/web and its wrangler.jsonc.
+  "name": "icop",
+  "main": "apps/web/.open-next/worker.js",
+  "compatibility_date": "2026-10-10",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "assets": {
+    "directory": "apps/web/.open-next/assets",
+    "binding": "ASSETS"
+  },
+  "services": [
+    {
+      "binding": "WORKER_SELF_REFERENCE",
+      "service": "icop"
+    }
+  ],
+  "build": {
+    "command": "npm ci --prefix apps/web && cd apps/web && npx opennextjs-cloudflare build",
+    "cwd": "."
+  }
+}
