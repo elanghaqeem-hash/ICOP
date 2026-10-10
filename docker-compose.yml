@@ -39,6 +39,7 @@ services:
     restart: unless-stopped
     environment:
       API_INTERNAL_URL: http://api:3001
+      APP_PUBLIC_ORIGIN: ${APP_PUBLIC_ORIGIN:-http://localhost:3000}
     depends_on: [api]
     ports: ["3000:3000"]
 
