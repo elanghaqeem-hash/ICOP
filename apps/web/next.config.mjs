@@ -1,10 +1,10 @@
 /** @type {import('next').NextConfig} */
-const API = process.env.API_INTERNAL_URL ?? 'http://localhost:3001';
+// /api/v1/* is owned by Next route handlers (httpOnly-cookie BFF).
+// Never rewrite those requests directly to the backend, or browsers can
+// bypass Origin/CSRF checks and inadvertently expose upstream bearer tokens.
 const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
-  // Same-origin API proxy: browser tidak perlu CORS, token tidak dikirim ke origin lain
-  async rewrites() { return [{ source: '/api/:path*', destination: `${API}/api/:path*` }]; },
   async headers() {
     return [{ source: '/:path*', headers: [
       { key: 'X-Frame-Options', value: 'DENY' },
