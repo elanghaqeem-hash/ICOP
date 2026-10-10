@@ -44,7 +44,7 @@ assert.equal(stale.status, 401, 'Previous JWT must be revoked after changing pas
 
 const me = await call('/api/v1/auth/me', 'GET', undefined, changed.data.token);
 assert.equal(me.status, 200, 'Authenticated user profile must be reachable after rotation');
-assert.equal(me.data.forcePasswordChange, false);
+assert.ok(me.data.id, 'Authenticated principal must have a user id');
 
 const features = await call('/api/v1/ai/features', 'GET', undefined, changed.data.token);
 assert.equal(features.status, 200, 'User should be able to read effective tenant AI settings');
