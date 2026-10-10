@@ -28,7 +28,7 @@ mock.listen(0, '127.0.0.1');
 await once(mock, 'listening');
 const port = mock.address().port;
 const next = spawn('node', ['node_modules/next/dist/bin/next', 'start', '-p', '3097', '-H', '127.0.0.1'],
-  { env: { ...process.env, NODE_ENV: 'production', API_INTERNAL_URL: `http://127.0.0.1:${port}` }, stdio: ['ignore', 'pipe', 'pipe'] });
+  { env: { ...process.env, NODE_ENV: 'production', APP_PUBLIC_ORIGIN: base, API_INTERNAL_URL: `http://127.0.0.1:${port}` }, stdio: ['ignore', 'pipe', 'pipe'] });
 let stdout = '';
 next.stdout.on('data', (d) => { stdout = (stdout + d.toString()).slice(-2500); });
 next.stderr.on('data', (d) => { stdout = (stdout + d.toString()).slice(-2500); });
