@@ -10,7 +10,8 @@
     "migrate:seed": "tsx src/migrate.ts --seed",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "openapi": "tsx src/export-openapi.ts"
+    "openapi": "tsx src/export-openapi.ts",
+    "migration:preflight": "tsx src/migration-preflight.ts"
   },
   "license": "ISC",
   "dependencies": {
