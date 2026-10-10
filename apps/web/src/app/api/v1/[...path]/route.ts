@@ -48,6 +48,7 @@ async function proxy(request: NextRequest, context: Context): Promise<NextRespon
   const suffix = path.join('/');
   const login = suffix === 'auth/login' && request.method === 'POST';
   const changePassword = suffix === 'auth/change-password' && request.method === 'POST';
+  const mfaFinish = (suffix === 'auth/mfa/enable' || suffix === 'auth/mfa/verify') && request.method === 'POST';
   const logout = suffix === 'auth/logout' && request.method === 'POST';
   const logoutAll = suffix === 'auth/logout-all' && request.method === 'POST';
   // The public e-sign webhook is authenticated upstream with a provider HMAC.
@@ -103,12 +104,16 @@ async function proxy(request: NextRequest, context: Context): Promise<NextRespon
 
   // The backend keeps returning bearer tokens to non-browser API consumers.
   // The BFF removes them before the browser sees any response body.
-  if (upstream.ok && (login || changePassword)) {
-    let data: { token?: string; user?: unknown };
+  if (upstream.ok && (login || changePassword || mfaFinish)) {
+    let data: { token?: string; user?: unknown; mfaRequired?: boolean; mfaEnrolled?: boolean };
     try { data = await upstream.json(); } catch { return error(502, 'INVALID_AUTH_RESPONSE'); }
     if (!data.token || (login && !data.user)) return error(502, 'INVALID_AUTH_RESPONSE');
-    const response = NextResponse.json(login ? { user: data.user } : { ok: true },
-      { headers: { 'cache-control': 'no-store' } });
+    // A short-lived MFA challenge is also an httpOnly cookie. Never reveal any
+    // bearer JWT (including challenge tokens) to client JavaScript.
+    const response = NextResponse.json({
+      ...(login || mfaFinish ? { user: data.user } : { ok: true }),
+      mfaRequired: !!data.mfaRequired, mfaEnrolled: !!data.mfaEnrolled,
+    }, { headers: { 'cache-control': 'no-store' } });
     setSessionCookies(response, data.token);
     return response;
   }
