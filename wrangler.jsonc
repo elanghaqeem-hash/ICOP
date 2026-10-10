@@ -11,6 +11,7 @@
     "binding": "ASSETS"
   },
   "previews": {},
+  "preview_urls": false,
   "services": [
     {
       "binding": "WORKER_SELF_REFERENCE",
@@ -18,7 +19,7 @@
     }
   ],
   "build": {
-    "command": "npm ci --prefix apps/web && cd apps/web && npx opennextjs-cloudflare build",
+    "command": "npm ci --prefix apps/web && cd apps/web && npm run build:cloudflare",
     "cwd": "."
   }
 }
