@@ -19,10 +19,12 @@ export default function ChangePassword() {
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     run(async () => {
-      const r = await api('/api/v1/auth/change-password', { body: { currentPassword: cur, newPassword: pw } });
-      const s = getSession();
-      if (s) setSession({ token: r.token, user: { ...s.user, forcePasswordChange: false } });
-      router.replace(s?.user.role === 'customer_user' ? '/portal' : '/');
+      await api('/api/v1/auth/change-password', { body: { currentPassword: cur, newPassword: pw } });
+      // The BFF rotates the httpOnly cookie. No bearer token is returned to JS.
+      const previous = getSession();
+      if (previous) setSession({ user: { ...previous.user, forcePasswordChange: false } });
+      const user = await api<{ role: string }>('/api/v1/auth/me');
+      router.replace(user.role === 'customer_user' ? '/portal' : '/');
     });
   };
   return (
