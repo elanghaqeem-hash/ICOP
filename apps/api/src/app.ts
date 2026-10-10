@@ -12,6 +12,7 @@ import { AppError } from './lib/errors.js';
 import { AiDisabledError } from './modules/ai/gateway.js';
 import './lib/context.js';
 import { authRoutes } from './modules/auth/routes.js';
+import { mfaRecoveryRoutes } from './modules/auth/recovery.js';
 import { mfaChallengeRequired } from './modules/auth/policy.js';
 import { crmRoutes } from './modules/crm/routes.js';
 import { pricingRoutes } from './modules/pricing/routes.js';
@@ -119,6 +120,7 @@ export async function buildApp(opts: BuildOptions = {}) {
   });
 
   await app.register(authRoutes);
+  await app.register(mfaRecoveryRoutes);
   await app.register(crmRoutes);
   await app.register(pricingRoutes);
   await app.register(quotationRoutes);
