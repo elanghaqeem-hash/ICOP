@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 ENV_FILE="$ROOT/infra/hostinger/.env.production"
 COMPOSE_FILE="$ROOT/docker-compose.hostinger.yml"
-ACTION="$(echo "$1" 2>/dev/null || true)"
+ACTION="$(printf '%s' "$@" | head -n 1)"
 usage() { echo "Usage: $0 preflight|db-up|backup|migrate|release|status"; }
 case "$ACTION" in preflight|db-up|backup|migrate|release|status) ;; *) usage; exit 2 ;; esac
 command -v docker >/dev/null || { echo "FAIL: docker not installed"; exit 1; }
