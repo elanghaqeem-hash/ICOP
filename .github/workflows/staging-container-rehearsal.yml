@@ -100,14 +100,17 @@ jobs:
             -H 'content-type: application/json' \
             -d '{"email":"nobody@example.invalid","password":"invalid"}')"
           test "$code" = "403"
-          if docker compose -f docker-compose.staging.yml port api 3001 >/dev/null 2>&1; then
-            echo "FAIL: API port is exposed on host"
-            exit 1
-          fi
-          if docker compose -f docker-compose.staging.yml port postgres 5432 >/dev/null 2>&1; then
-            echo "FAIL: PostgreSQL port is exposed on host"
-            exit 1
-          fi
+          # "docker compose port" can succeed for EXPOSE-only container ports;
+          # "docker port <container>" lists ONLY actual host-published bindings.
+          for service in api postgres; do
+            cid="$(docker compose -f docker-compose.staging.yml ps -q "$service")"
+            test -n "$cid"
+            published="$(docker port "$cid" 2>/dev/null || true)"
+            if [ -n "$published" ]; then
+              echo "FAIL: $service has a host-published port"
+              exit 1
+            fi
+          done
           echo "PASS: Next login 200, no-session BFF 401, cross-origin POST 403, API/DB private"
       - name: Diagnostics on failure (no secrets)
         if: failure()
