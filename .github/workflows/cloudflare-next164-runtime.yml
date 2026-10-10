@@ -48,6 +48,13 @@ jobs:
             if [ "$HTTP_CODE" = "200" ]; then
               if grep -Eiq 'login|sign in|masuk|icop' /tmp/icop-login.html; then
                 echo "PASS: /login returned HTML 200"
+                STATUS_CODE=$(curl -sS --max-time 8 -o /tmp/icop-status.json -w '%{http_code}' http://127.0.0.1:8787/api/system/status)
+                test "$STATUS_CODE" = "200" || { echo "FAIL: readiness HTTP $STATUS_CODE"; exit 1; }
+                grep -q '"backend":"NOT_CONFIGURED"' /tmp/icop-status.json || { echo "FAIL: status must disclose backend NOT_CONFIGURED without secrets"; exit 1; }
+                LOGIN_CODE=$(curl -sS --max-time 8 -o /tmp/icop-auth.json -w '%{http_code}' -X POST -H "Origin: http://127.0.0.1:8787" -H "Content-Type: application/json" -d '{"tenant":"DEIT","email":"nobody@example.invalid","password":"invalid"}' http://127.0.0.1:8787/api/v1/auth/login)
+                test "$LOGIN_CODE" = "503" || { echo "FAIL: unconfigured backend must return 503, got $LOGIN_CODE"; exit 1; }
+                grep -q '"code":"BACKEND_NOT_CONFIGURED"' /tmp/icop-auth.json || { echo "FAIL: backend readiness error code"; exit 1; }
+                echo "PASS: no-backend runtime returns explicit 503 and does not attempt localhost API"
                 exit 0
               fi
               echo "Response was 200 but expected login content missing"
