@@ -31,7 +31,7 @@ export default function ApprovalDetail() {
     }
   });
   const completeStepUp = () => act.run(async () => {
-    if (!pendingDecision || !/^\\d{6}$/.test(otp)) return;
+    if (!pendingDecision || !/^[0-9]{6}$/.test(otp)) return;
     await api('/api/v1/auth/mfa/step-up', { body: { code: otp } });
     await api(`/api/v1/approvals/${id}/decide`, {
       body: { decision: pendingDecision, comment: comment || undefined }, idempotencyKey: newKey(),
@@ -87,7 +87,7 @@ export default function ApprovalDetail() {
               <p>Masukkan kode baru dari aplikasi authenticator untuk memutuskan: <strong>{pendingDecision}</strong>.</p>
               <Field label="Kode MFA (6 digit)">
                 <input inputMode="numeric" pattern="[0-9]{6}" maxLength={6} autoComplete="one-time-code"
-                  value={otp} onChange={(e) => setOtp(e.target.value.replace(/\\D/g, '').slice(0, 6))}/>
+                  value={otp} onChange={(e) => setOtp(e.target.value.replace(/[^0-9]/g, '').slice(0, 6))}/>
               </Field>
               <div className="row">
                 <button className="btn" disabled={act.busy || otp.length !== 6} onClick={completeStepUp}>Verifikasi & lanjutkan keputusan</button>
