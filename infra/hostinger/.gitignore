@@ -1,0 +1,5 @@
+# Hostinger production secrets and copied deployment state.
+infra/hostinger/.env.production
+infra/hostinger/.env.production.*
+!infra/hostinger/.env.production.example
+infra/hostinger/backups/
