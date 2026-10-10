@@ -10,7 +10,7 @@
 - Cloudflare Worker bindings: ASSETS and WORKER_SELF_REFERENCE. API_INTERNAL_URL is **not set**; no backend connection has been verified.
 - Fastify `apps/api` is a separate Node 22 service requiring PostgreSQL 16 with correct migrations, JWT_SECRET, SECRETS_MASTER_KEY, tenant policy, storage/OCR, HTTPS ingress and operational monitoring. A Cloudflare frontend deploy does not provision it.
 - Before this change the Next.js BFF silently fell back to `http://localhost:3001` even on production Workers. That is not a reachable backend and is now prohibited.
-- This change returns 503 code `BACKEND_NOT_CONFIGURED` for authenticated API login attempts when no explicit API_INTERNAL_URL has been provisioned. No fabricated JWT/user/password is created.
+- Merged PR #14 returns 503 code `API_NOT_CONFIGURED` for authenticated API login attempts when no explicit API_INTERNAL_URL has been provisioned. No fabricated JWT/user/password is created.
 - The public `GET /api/system/status` exposes only frontend UP and whether an API URL is configured, not hostnames, secrets, database connectivity or customer information; its `readyForBusiness` is intentionally false until true backend/runtime UAT exists.
 - The login form uses the existing alert to provide an Indonesian administrator-facing explanation of this condition rather than generic API error text.
 
@@ -19,7 +19,7 @@
 | Gate | Minimum proof | Status at authoring |
 |---|---|---|
 | 0 Frontend Worker runtime | GET /login HTTP 200; no Cloudflare 1101 | Verified before this patch |
-| 1 Fail-closed missing backend | GET /api/system/status yields NOT_CONFIGURED; POST /api/v1/auth/login yields 503 BACKEND_NOT_CONFIGURED; no password transmitted to nonexistent backend | Await CI |
+| 1 Fail-closed missing backend | GET /api/system/status yields NOT_CONFIGURED; POST /api/v1/auth/login yields 503 API_NOT_CONFIGURED; no password transmitted to nonexistent backend | Await CI |
 | 2 Real backend and DB | Operator-provisioned PostgreSQL 16 + Fastify; migrate after backup; read-only migration preflight; API /health | Not provided |
 | 3 Private API ingress | Set API_INTERNAL_URL on Cloudflare securely; APP_PUBLIC_ORIGIN exactly the HTTPS website; authenticated and origin/CSRF testing | Not provided |
 | 4 Real identity UAT | U01/U02 real users (not default passwords), MFA and tenant isolation; no session bearer leaked | Not done |
