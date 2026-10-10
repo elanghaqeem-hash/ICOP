@@ -53,7 +53,7 @@ beforeAll(async()=>{
  const [{id:tenantB}]=await sql`INSERT INTO tenants(code,name)
    VALUES('P6B2B','Client Another Tenant') RETURNING id`;
  await sql`INSERT INTO users(tenant_id,email,full_name,role,password_hash,force_password_change)
-   VALUES(${tenantB},'b2-admin@example.invalid','Tenant B Admin','company_admin',
+   VALUES(${tenantB},'b2-admin@example.invalid','Tenant B Tender Officer','tender_officer',
       ${await bcrypt.hash(NEW_PW,12)},false)`;
  const other=await app.inject({method:'POST',url:'/api/v1/auth/login',
    payload:{tenant:'P6B2B',email:'b2-admin@example.invalid',password:NEW_PW}});
