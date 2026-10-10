@@ -12,6 +12,7 @@
     "binding": "ASSETS"
   },
   "previews": {},
+  "preview_urls": false,
   "services": [
     {
       "binding": "WORKER_SELF_REFERENCE",
