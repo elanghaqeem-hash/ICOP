@@ -1,0 +1,56 @@
+name: ICOP Cloudflare Develop Gate (no deployment)
+
+on:
+  push:
+    branches: [develop]
+  pull_request:
+    branches: [develop]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: icop-cloudflare-develop-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  worker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - name: Install pinned frontend dependencies
+        run: npm ci
+      - name: Check types
+        run: npm run typecheck
+      - name: Build OpenNext Worker (includes Next 16.4 manifest patch)
+        run: npm run build:cloudflare
+      - name: Validate Cloudflare Worker without public deployment
+        run: npx wrangler deploy --dry-run
+      - name: Smoke real local Worker login and readiness routes
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx wrangler dev --local --port 8787 --ip 127.0.0.1 > /tmp/icop-dev-worker.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          ok=false
+          for attempt in $(seq 1 40); do
+            http="$(curl -sS --max-time 4 -o /tmp/icop-dev-login.html -w '%{http_code}' http://127.0.0.1:8787/login 2>/dev/null || true)"
+            if [ "$http" = 200 ]; then ok=true; break; fi
+            sleep 2
+          done
+          if [ "$ok" != true ]; then tail -n 80 /tmp/icop-dev-worker.log; exit 1; fi
+          grep -Eiq 'ICOP|login|masuk' /tmp/icop-dev-login.html
+          curl -fsS --max-time 8 http://127.0.0.1:8787/api/system/status |
+            grep -q '"frontend":"UP"'
+          echo "Cloudflare Develop gate PASS. Manual deployment and Access review are separate."

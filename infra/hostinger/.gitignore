@@ -1,0 +1,5 @@
+# Local Hostinger environment and secret backups (relative to this directory).
+.env.production
+.env.production.*
+!.env.production.example
+backups/
