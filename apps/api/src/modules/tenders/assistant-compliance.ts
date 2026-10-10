@@ -7,7 +7,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { audit, requirePerm } from '../../lib/context.js';
 import { badRequest, conflict, forbidden, notFound, unprocessable } from '../../lib/errors.js';
-import { complete } from '../ai/gateway.js';
+import { AiDisabledError, complete, featureEnabled } from '../ai/gateway.js';
 import type { FetchLike } from '../ai/providers.js';
 import { norm } from './extract.js';
 import { tenderTerms, tenderTermScore } from '../../lib/tender-grounding.js';
@@ -57,7 +57,10 @@ export async function tenderComplianceRoutes(app:FastifyInstance,opts:{fetchImpl
  app.get('/api/v1/tenders/:id/assistant/suggestions',{...auth,preValidation:R},async(req)=>{
   const {id}=Params.parse(req.params);
   await load(req.authUser.tenantId,id);
-  return {items:await list(req.authUser.tenantId,id)};
+  // Read-only Tender 6B1 remains available before migration 013.
+  if(!(await featureEnabled(sql,req.authUser.tenantId,'tender_compliance')))
+    return {items:[],enabled:false};
+  return {items:await list(req.authUser.tenantId,id),enabled:true};
  });
 
  app.post('/api/v1/tenders/:id/assistant/compliance-suggest',{
@@ -68,6 +71,8 @@ export async function tenderComplianceRoutes(app:FastifyInstance,opts:{fetchImpl
     requirementIds:z.array(z.string().uuid()).min(1).max(20).optional(),
   }).parse(req.body??{});
   const tender=await load(u.tenantId,id);
+  if(!(await featureEnabled(sql,u.tenantId,'tender_compliance')))
+    throw new AiDisabledError('tender_compliance');
   const reqs=await sql`SELECT r.id,r.ref_code,r.category,r.requirement,r.mandatory,r.updated_at
     FROM tender_requirements r
     WHERE r.tenant_id=${u.tenantId} AND r.tender_id=${id}
@@ -151,6 +156,8 @@ Keluarkan HANYA JSON: {"items":[{"ref":"KODE","status":"COMPLY|PARTIAL|NON_COMPL
   const {id,sid}=z.object({id:z.string().uuid(),sid:z.string().uuid()}).parse(req.params);
   const b=z.object({decision:z.enum(['ACCEPT','REJECT']),note:z.string().max(500).optional()}).parse(req.body);
   const u=req.authUser;await load(u.tenantId,id);
+  if(!(await featureEnabled(sql,u.tenantId,'tender_compliance')))
+    throw new AiDisabledError('tender_compliance');
   return sql.begin(async(tx)=>{
     const [s]=await tx`SELECT s.*,r.category,r.mandatory,r.evidence AS current_evidence,
       r.response AS current_response,r.compliance_status AS current_status,
