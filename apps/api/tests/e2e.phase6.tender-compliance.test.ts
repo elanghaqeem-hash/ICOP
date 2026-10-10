@@ -5,7 +5,7 @@ import type {Sql} from '../src/db.js';
 import {api,freshDb,login,makeApp,NEW_PW} from './helpers.js';
 
 let sql:Sql,app:FastifyInstance;
-let maker:ReturnType<typeof api>,checker:ReturnType<typeof api>,auditor:ReturnType<typeof api>,outside:ReturnType<typeof api>;
+let maker:ReturnType<typeof api>,checker:ReturnType<typeof api>,auditor:ReturnType<typeof api>,outside:ReturnType<typeof api>,admin:ReturnType<typeof api>;
 let tenderId='',goodId='',badId='',factId='',goodSuggestion='',badSuggestion='';
 const q:string[]=[];const prompts:string[]=[];
 const oldPolicy=process.env.MFA_POLICY,oldKey=process.env.ANTHROPIC_API_KEY;
@@ -20,6 +20,7 @@ beforeAll(async()=>{
  maker=api(app,await login(app,'tender@defendit360.com'));
  checker=api(app,await login(app,'sales@defendit360.com'));
  auditor=api(app,await login(app,'auditor@defendit360.com'));
+ admin=api(app,await login(app,'companyadmin@defendit360.com'));
  const [{id:tenant}]=await sql`SELECT id FROM tenants WHERE code='DEIT'`;
  const [{id:creator}]=await sql`SELECT id FROM users WHERE tenant_id=${tenant} AND email='tender@defendit360.com'`;
  const [t]=await sql`INSERT INTO tenders
@@ -70,6 +71,22 @@ describe('Phase6B2 verified-fact human-reviewed tender compliance',()=>{
  it('requires AI and tender write permission',async()=>{
   const r=await auditor.post(`/api/v1/tenders/${tenderId}/assistant/compliance-suggest`,{});
   expect(r.status).toBe(403);
+ });
+ it('fails closed until a tenant administrator explicitly enables the AI feature',async()=>{
+  const features=await admin.get('/api/v1/ai/features');
+  expect(features.status).toBe(200);
+  const setting=features.body.items.find((x:any)=>x.feature==='tender_compliance');
+  expect(setting.enabled).toBe(false);
+  expect(setting.effective).toBe(false);
+  const blocked=await maker.post(`/api/v1/tenders/${tenderId}/assistant/compliance-suggest`,{});
+  expect(blocked.status).toBe(409);
+  expect(blocked.body.code).toBe('AI_DISABLED');
+  const activate=await admin.put('/api/v1/ai/features',{
+    features:{tender_compliance:true},
+  });
+  expect(activate.status).toBe(200);
+  const enabled=await admin.get('/api/v1/ai/features');
+  expect(enabled.body.items.find((x:any)=>x.feature==='tender_compliance').effective).toBe(true);
  });
  it('uses only valid verified evidence and never modifies compliance without human decision',async()=>{
   q.push(JSON.stringify({items:[
