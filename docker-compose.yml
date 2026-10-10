@@ -1,0 +1,63 @@
+# ICOP CyberBusiness 360 — stack lokal/staging
+# Jalankan: cp .env.example .env  (isi nilai)  →  docker compose up -d --build
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-icop}
+      POSTGRES_USER: ${DB_USER:-icop_app}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?isi DB_PASSWORD di .env}
+    volumes: [postgres_data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-icop_app} -d ${DB_NAME:-icop}"]
+      interval: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes: [redis_data:/data]
+
+  api:
+    build: { context: ./apps/api }
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DB_HOST: postgres
+      NODE_ENV: production
+      DOCUMENT_DIR: /app/storage/documents
+      UPLOAD_DIR: /app/storage/uploads
+    volumes: [api_storage:/app/storage]
+    depends_on:
+      postgres: { condition: service_healthy }
+    ports: ["127.0.0.1:3001:3001"]  # API tidak dibuka ke internet; Next.js meneruskan via jaringan Docker
+
+  web:
+    build: { context: ./apps/web }
+    restart: unless-stopped
+    environment:
+      API_INTERNAL_URL: http://api:3001
+      APP_PUBLIC_ORIGIN: ${APP_PUBLIC_ORIGIN:-http://localhost:3000}
+    depends_on: [api]
+    ports: ["3000:3000"]
+
+  # Object storage S3-compatible (opsional): docker compose --profile minio up -d
+  # Lalu di aplikasi: Pengaturan → Integrasi → Object storage: endpoint http://minio:9000 (gunakan HTTPS/TLS di produksi), bucket, access key.
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z   # verifikasi tag rilis terbaru sebelum produksi
+    profiles: ["minio"]
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-icop-minio}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?isi MINIO_ROOT_PASSWORD di .env bila memakai profil minio}
+    volumes: [minio_data:/data]
+    ports: ["9000:9000", "9001:9001"]
+
+volumes:
+  minio_data:
+  api_storage:
+  postgres_data:
+  redis_data:

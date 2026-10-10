@@ -1,0 +1,107 @@
+name: ICOP CI — verify, test, build
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: icop-ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  api-checks:
+    name: API typecheck and tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: icop_app
+          POSTGRES_PASSWORD: ci_only_not_production
+          POSTGRES_DB: icop_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U icop_app -d icop_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      NODE_ENV: test
+      JWT_SECRET: ci_only_long_random_placeholder_not_for_production
+      SECRETS_MASTER_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      TEST_DATABASE_URL: postgres://icop_app:ci_only_not_production@localhost:5432/icop_test
+      LOGIN_RATE_LIMIT: '1000'
+    defaults:
+      run:
+        working-directory: apps/api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/api/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install OCR/PDF test prerequisites
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq tesseract-ocr tesseract-ocr-ind ghostscript qpdf poppler-utils
+          python3 -m pip install --quiet 'moto[server]>=5,<6'
+          echo "$(python3 -m site --user-base)/bin" >> "$GITHUB_PATH"
+        working-directory: .
+      - name: Verify S3 emulator and PDF utilities are available
+        working-directory: .
+        run: |
+          command -v moto_server
+          command -v pdftoppm
+          command -v tesseract
+      - run: npm ci
+      - run: npm run typecheck
+      - name: Run all regression suites (Phase 1–4)
+        run: npm test
+      - run: npm run build
+
+  web-checks:
+    name: Web typecheck and production build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
+      - name: BFF HTTP authentication and CSRF smoke
+        run: node tests/auth-bff-smoke.mjs
+
+  dependency-audit:
+    name: Dependency audit (production packages)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        directory: [apps/api, apps/web]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Audit dependencies
+        working-directory: ${{ matrix.directory }}
+        run: npm audit --omit=dev --audit-level=high
