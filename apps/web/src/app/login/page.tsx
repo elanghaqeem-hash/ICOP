@@ -14,7 +14,7 @@ export default function LoginPage() {
     run(async () => {
       const r = await api('/api/v1/auth/login', { body: { tenant: 'DEIT', email, password } });
       setSession(r);
-      router.replace(r.user.forcePasswordChange ? '/change-password' : r.user.role === 'customer_user' ? '/portal' : '/');
+      router.replace(r.user.forcePasswordChange ? '/change-password' : r.mfaRequired ? '/mfa' : r.user.role === 'customer_user' ? '/portal' : '/');
     });
   };
   return (
