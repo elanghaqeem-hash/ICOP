@@ -56,7 +56,10 @@ async function proxy(request: NextRequest, context: Context): Promise<NextRespon
   const unsafe = !methodsWithoutBody.has(request.method);
 
   if (unsafe && !webhook) {
-    if (request.headers.get('origin') !== request.nextUrl.origin ||
+    // On HTTPS ingress/reverse proxies, Next's internal request URL may have
+    // a different scheme/host from the browser. Set APP_PUBLIC_ORIGIN in stage/prod.
+    const publicOrigin = process.env.APP_PUBLIC_ORIGIN ?? request.nextUrl.origin;
+    if (request.headers.get('origin') !== publicOrigin ||
         request.headers.get('sec-fetch-site') === 'cross-site') return error(403, 'ORIGIN_MISMATCH');
     if (request.headers.get('content-type')?.startsWith('application/x-www-form-urlencoded')) return error(415, 'UNSUPPORTED_MEDIA_TYPE');
     if (!login && !checkToken(request.cookies.get(CSRF)?.value, request.headers.get('x-icop-csrf'))) {
@@ -111,7 +114,7 @@ async function proxy(request: NextRequest, context: Context): Promise<NextRespon
   }
 
   const responseHeaders = new Headers({ 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
-  for (const name of ['content-type', 'content-disposition', 'content-encoding']) {
+  for (const name of ['content-type', 'content-disposition']) {
     const value = upstream.headers.get(name);
     if (value) responseHeaders.set(name, value);
   }
