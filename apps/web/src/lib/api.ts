@@ -37,7 +37,13 @@ export async function api<T = any>(path: string, opts: { method?: string; body?:
   if (!res.ok) {
     if (res.status === 401 && typeof window !== 'undefined' && !path.includes('/auth/login')) { setSession(null); window.location.href = '/login'; }
     if (res.status === 403 && data?.code === 'PASSWORD_CHANGE_REQUIRED' && typeof window !== 'undefined') window.location.href = '/change-password';
-    throw new ApiError(res.status, data?.code ?? 'ERROR', data?.message ?? `HTTP ${res.status}`, data?.details ?? data?.attempts);
+    const serviceMessages: Record<string, string> = {
+      API_NOT_CONFIGURED: 'Layanan ICOP belum terhubung ke server backend. Silakan hubungi administrator.',
+      API_ORIGIN_INVALID: 'Konfigurasi koneksi server ICOP tidak valid. Silakan hubungi administrator.',
+      API_UNAVAILABLE: 'Server ICOP belum dapat dijangkau. Coba lagi nanti atau hubungi administrator.',
+    };
+    const code = typeof data?.code === 'string' ? data.code : 'ERROR';
+    throw new ApiError(res.status, code, serviceMessages[code] ?? data?.message ?? `HTTP ${res.status}`, data?.details ?? data?.attempts);
   }
   return data as T;
 }
