@@ -78,6 +78,9 @@ describe('Phase6B2 verified-fact human-reviewed tender compliance',()=>{
   const setting=features.body.items.find((x:any)=>x.feature==='tender_compliance');
   expect(setting.enabled).toBe(false);
   expect(setting.effective).toBe(false);
+  const idle=await maker.get(`/api/v1/tenders/${tenderId}/assistant/suggestions`);
+  expect(idle.status).toBe(200);
+  expect(idle.body).toMatchObject({items:[],enabled:false});
   const blocked=await maker.post(`/api/v1/tenders/${tenderId}/assistant/compliance-suggest`,{});
   expect(blocked.status).toBe(409);
   expect(blocked.body.code).toBe('AI_DISABLED');
