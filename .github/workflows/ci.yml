@@ -83,6 +83,8 @@ jobs:
       - run: npm run build
         env:
           NEXT_TELEMETRY_DISABLED: '1'
+      - name: BFF HTTP authentication and CSRF smoke
+        run: node tests/auth-bff-smoke.mjs
 
   dependency-audit:
     name: Dependency audit (production packages)
