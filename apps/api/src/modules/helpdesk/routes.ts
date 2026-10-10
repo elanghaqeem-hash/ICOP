@@ -4,11 +4,13 @@ import { z } from 'zod';
 import type { Tx } from '../../db.js';
 import { audit, nextNumber, notify, requirePerm } from '../../lib/context.js';
 import { AppError, badRequest, conflict, forbidden, notFound, unprocessable } from '../../lib/errors.js';
+import { addBusinessMinutes, businessMinutesBetween, type Calendar } from '../../lib/businessTime.js';
 
 export const PRIORITIES = ['P1', 'P2', 'P3', 'P4'] as const;
 /** Target SLA bawaan (menit) — praktik umum layanan SOC/MSSP; dapat diubah admin per tenant. */
-export const DEFAULT_SLA: Record<string, { response: number; resolution: number }> = {
-  P1: { response: 15, resolution: 240 }, P2: { response: 60, resolution: 480 }, P3: { response: 240, resolution: 1440 }, P4: { response: 480, resolution: 4320 },
+export const DEFAULT_SLA: Record<string, { response: number; resolution: number; calendar: '24x7' | 'BUSINESS' }> = {
+  P1: { response: 15, resolution: 240, calendar: '24x7' }, P2: { response: 60, resolution: 480, calendar: '24x7' },
+  P3: { response: 240, resolution: 1440, calendar: 'BUSINESS' }, P4: { response: 480, resolution: 4320, calendar: 'BUSINESS' },
 };
 const SEVERITY_TO_PRIORITY: Record<string, string> = { critical: 'P1', high: 'P2', medium: 'P3', low: 'P4', info: 'P4' };
 const FLOW: Record<string, string[]> = {
@@ -16,37 +18,88 @@ const FLOW: Record<string, string[]> = {
   RESOLVED: ['IN_PROGRESS', 'CLOSED'], CLOSED: [],
 };
 
-async function slaFor(db: any, tenantId: string, priority: string) {
-  const [r] = await db`SELECT response_minutes, resolution_minutes FROM sla_targets WHERE tenant_id = ${tenantId} AND priority = ${priority}`;
-  return r ? { response: Number(r.responseMinutes), resolution: Number(r.resolutionMinutes) } : DEFAULT_SLA[priority];
+type Sla = { response: number; resolution: number; calendar: '24x7' | 'BUSINESS'; source: 'DEFAULT' | 'TENANT' | 'CONTRACT' };
+/** SLA precedence: active contract → tenant policy → default. */
+export async function slaFor(db: any, tenantId: string, priority: string, contractId?: string | null): Promise<Sla> {
+  if (contractId) {
+    const [c] = await db`SELECT response_minutes, resolution_minutes, calendar FROM contract_sla
+      WHERE contract_id = ${contractId} AND tenant_id = ${tenantId} AND priority = ${priority}`;
+    if (c) return { response: Number(c.responseMinutes), resolution: Number(c.resolutionMinutes),
+      calendar: c.calendar, source: 'CONTRACT' };
+  }
+  const [r] = await db`SELECT response_minutes, resolution_minutes, calendar FROM sla_targets
+    WHERE tenant_id = ${tenantId} AND priority = ${priority}`;
+  return r ? { response: Number(r.responseMinutes), resolution: Number(r.resolutionMinutes),
+    calendar: r.calendar, source: 'TENANT' } : { ...DEFAULT_SLA[priority], source: 'DEFAULT' };
 }
 
-async function createTicket(tx: Tx | any, tenantId: string, actorId: string | null, b: { customerId: string; projectId?: string | null; source: string; category: string; priority: string;
-  title: string; description: string; assigneeId?: string | null; externalRef?: string | null; meta?: Record<string, unknown> }) {
-  const sla = await slaFor(tx, tenantId, b.priority);
-  const year = new Date().getFullYear();
+export async function calendarFor(db: any, tenantId: string, mode: '24x7' | 'BUSINESS'): Promise<Calendar> {
+  const [c] = await db`SELECT start_minute, end_minute, weekdays FROM business_calendar WHERE tenant_id = ${tenantId}`;
+  const holidays = await db`SELECT to_char(day,'YYYY-MM-DD') AS d FROM holidays WHERE tenant_id = ${tenantId}`;
+  return { mode, startMin: c ? Number(c.startMinute) : 480,
+    endMin: c ? Number(c.endMinute) : 1020, weekdays: c ? c.weekdays as number[] : [1,2,3,4,5],
+    holidays: new Set(holidays.map((h: any) => String(h.d))) };
+}
+
+async function contractForTicket(db: any, tenantId: string, customerId: string, projectId?: string | null) {
+  if (projectId) {
+    const [project] = await db`SELECT contract_id FROM projects
+      WHERE id = ${projectId} AND tenant_id = ${tenantId} AND customer_id = ${customerId}`;
+    if (project) return project.contractId as string;
+  }
+  const [contract] = await db`SELECT c.id FROM contracts c WHERE c.tenant_id = ${tenantId}
+    AND c.customer_id = ${customerId} AND c.status = 'ACTIVE'
+    AND EXISTS (SELECT 1 FROM contract_sla cs WHERE cs.contract_id = c.id AND cs.tenant_id = ${tenantId})
+    ORDER BY c.end_date DESC LIMIT 1`;
+  return (contract?.id as string) ?? null;
+}
+
+export async function createTicket(tx: Tx | any, tenantId: string, actorId: string | null, b: {
+  customerId: string; projectId?: string | null; source: string; category: string; priority: string;
+  title: string; description: string; assigneeId?: string | null;
+  externalRef?: string | null; meta?: Record<string, unknown>;
+}) {
+  const contractId = await contractForTicket(tx, tenantId, b.customerId, b.projectId);
+  const sla = await slaFor(tx, tenantId, b.priority, contractId);
+  const cal = await calendarFor(tx, tenantId, sla.calendar);
+  const now = new Date(), year = now.getFullYear();
   const n = await nextNumber(tx, tenantId, 'TICKET', String(year));
-  const [t] = await tx`INSERT INTO tickets (tenant_id, number, customer_id, project_id, source, category, priority, title, description, assignee_id,
-      response_due_at, resolution_due_at, external_ref, meta, created_by)
-    VALUES (${tenantId}, ${`TCK-${year}-${String(n).padStart(5, '0')}`}, ${b.customerId}, ${b.projectId ?? null}, ${b.source}, ${b.category}, ${b.priority}, ${b.title}, ${b.description},
-            ${b.assigneeId ?? null}, now() + make_interval(mins => ${sla.response}), now() + make_interval(mins => ${sla.resolution}), ${b.externalRef ?? null},
-            ${tx.json((b.meta ?? {}) as never)}, ${actorId}) RETURNING *`;
+  const [t] = await tx`INSERT INTO tickets
+    (tenant_id, number, customer_id, project_id, source, category, priority, title, description, assignee_id,
+     response_due_at, resolution_due_at, external_ref, meta, created_by, contract_id, sla_calendar, sla_source)
+    VALUES (${tenantId}, ${`TCK-${year}-${String(n).padStart(5,'0')}`}, ${b.customerId}, ${b.projectId ?? null},
+      ${b.source}, ${b.category}, ${b.priority}, ${b.title}, ${b.description}, ${b.assigneeId ?? null},
+      ${addBusinessMinutes(now,sla.response,cal)}, ${addBusinessMinutes(now,sla.resolution,cal)},
+      ${b.externalRef ?? null}, ${tx.json((b.meta ?? {}) as never)}, ${actorId},
+      ${contractId}, ${sla.calendar}, ${sla.source}) RETURNING *`;
   const team = b.assigneeId ? [b.assigneeId] : (await tx`SELECT id FROM users WHERE tenant_id = ${tenantId} AND is_active AND role IN ('soc_operations','project_manager')`).map((x: any) => x.id as string);
   await notify(tx, tenantId, team, 'TICKET_NEW', `${t.number} [${b.priority}] ${b.title}`, `Respons sebelum ${new Date(t.responseDueAt).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}`, `/helpdesk/${t.id}`);
   await audit(tx, { tenantId, id: actorId }, 'ticket.create', 'ticket', t.id as string, null, { number: t.number, priority: b.priority, source: b.source });
   return t;
 }
 
-/** Status SLA saat ini (tanpa jeda WAITING_CUSTOMER — kebijakan konservatif). */
+/** Status SLA; WAITING_CUSTOMER freezes resolution countdown. */
 const slaView = (t: Record<string, any>) => {
-  const now = Date.now();
+  const now = t.pausedAt ? new Date(t.pausedAt).getTime() : Date.now();
   const responded = !!t.firstResponseAt; const resolved = !!t.resolvedAt;
   return {
     responseBreached: t.responseBreached || (!responded && now > new Date(t.responseDueAt).getTime()) || (responded && new Date(t.firstResponseAt) > new Date(t.responseDueAt)),
     resolutionBreached: t.resolutionBreached || (!resolved && now > new Date(t.resolutionDueAt).getTime()) || (resolved && new Date(t.resolvedAt) > new Date(t.resolutionDueAt)),
     minutesToResolution: resolved ? null : Math.round((new Date(t.resolutionDueAt).getTime() - now) / 60000),
+    paused: !!t.pausedAt,
   };
 };
+
+async function unpause(tx: any, ticket: Record<string, any>) {
+  if (!ticket.pausedAt) return;
+  const cal = await calendarFor(tx, String(ticket.tenantId), ticket.slaCalendar);
+  const now = new Date(), paused = new Date(ticket.pausedAt);
+  const minutes = Math.round(businessMinutesBetween(paused, now, cal));
+  const deadline = addBusinessMinutes(new Date(ticket.resolutionDueAt), minutes, cal);
+  await tx`UPDATE tickets SET paused_at = NULL,
+    paused_minutes = paused_minutes + ${minutes}, resolution_due_at = ${deadline}
+    WHERE id = ${ticket.id} AND tenant_id = ${ticket.tenantId}`;
+}
 
 export async function helpdeskRoutes(app: FastifyInstance) {
   const sql = app.sql;
