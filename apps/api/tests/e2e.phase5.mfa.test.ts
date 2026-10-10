@@ -126,6 +126,10 @@ describe('Phase 5 Gate 4B: privileged MFA, anti-replay, tenant access', () => {
     expect((await api(app, enrolledToken).get('/api/v1/customers')).status).toBe(401);
   });
   it('rate-limits invalid TOTP and locks repeated attempts without leaking secret', async () => {
+    // Separate this lockout assertion from the expected invalid replay attempt in
+    // the prior test; every case starts with a clean local failure counter.
+    await sql`UPDATE users SET mfa_failed_attempts = 0, mfa_locked_until = NULL
+      WHERE email = 'companyadmin@defendit360.com'`;
     const challenge = await app.inject({ method: 'POST', url: '/api/v1/auth/login',
       payload: { email: 'companyadmin@defendit360.com', password: NEW_PW } });
     expect(challenge.statusCode).toBe(200);
