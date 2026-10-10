@@ -61,6 +61,7 @@ try {
   // Browser must not be given the JWT after login.
   const badOrigin = await send('/api/v1/auth/login', 'POST',
     { origin: 'https://attacker.invalid', body: JSON.stringify({ email: user.email, password: 'placeholder' }) });
+  if (badOrigin.status !== 403) console.error('BFF origin check diagnostic:', badOrigin.status, await badOrigin.clone().text(), stdout);
   assert.equal(badOrigin.status, 403);
   const login = await send('/api/v1/auth/login', 'POST', { body: JSON.stringify({ email: user.email, password: 'placeholder' }) });
   assert.equal(login.status, 200);
