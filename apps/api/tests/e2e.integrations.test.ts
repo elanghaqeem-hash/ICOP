@@ -76,10 +76,19 @@ let moto: ChildProcess | null = null;
 const MOTO_PORT = 5055;
 const portOpen = (port: number) => new Promise<boolean>((res) => { const s = createConnection(port, '127.0.0.1'); s.on('connect', () => { s.end(); res(true); }); s.on('error', () => res(false)); });
 async function startMoto() {
+  let errorLog = '';
   try {
-    moto = spawn('moto_server', ['-H', '127.0.0.1', '-p', String(MOTO_PORT)], { stdio: 'ignore' });
-    for (let i = 0; i < 40; i++) { if (await portOpen(MOTO_PORT)) return true; await new Promise((r) => setTimeout(r, 250)); }
-  } catch { /* moto tidak tersedia */ }
+    // Python moto can require >10s to boot on cold GitHub runners.
+    moto = spawn('moto_server', ['-H', '127.0.0.1', '-p', String(MOTO_PORT)], { stdio: ['ignore', 'ignore', 'pipe'] });
+    moto.on('error', (err) => { errorLog = err.message; });
+    moto.stderr?.on('data', (chunk: Buffer) => { errorLog = (errorLog + chunk.toString('utf8')).slice(-2048); });
+    for (let i = 0; i < 120; i++) {
+      if (await portOpen(MOTO_PORT)) return true;
+      if (moto.exitCode !== null) break;
+      await new Promise((r) => setTimeout(r, 250));
+    }
+  } catch (error) { errorLog = String(error); }
+  console.warn('[ICOP CI] S3 emulator not ready:', errorLog || 'startup timed out after 30 seconds');
   return false;
 }
 let s3Ready = false;
@@ -226,7 +235,11 @@ describe('E-sign VIDA (tersertifikasi) & Privy', () => {
 
 describe('Object storage S3/MinIO (server S3 nyata)', () => {
   it('uji koneksi, replikasi saat unggah, baca ulang dari bucket bila file lokal hilang, sinkronisasi', async (t) => {
-    if (!s3Ready) t.skip();
+    if (!s3Ready) {
+      // Never silently mark a production-gate integration test as skipped in CI.
+      if (process.env.CI) throw new Error('S3 emulator moto failed to start; run cannot pass with an untested storage integration');
+      t.skip();
+    }
     expect((await api(app, T.admin).put('/api/v1/integrations/STORAGE_S3', { enabled: true,
       config: { endpoint: `http://127.0.0.1:${MOTO_PORT}`, region: 'us-east-1', bucket: 'icop-docs', prefix: 'icop/', forcePathStyle: true },
       secrets: { accessKeyId: 'minio-key', secretAccessKey: 'minio-secret' } })).status).toBe(200);
