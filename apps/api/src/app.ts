@@ -12,6 +12,7 @@ import { AppError } from './lib/errors.js';
 import { AiDisabledError } from './modules/ai/gateway.js';
 import './lib/context.js';
 import { authRoutes } from './modules/auth/routes.js';
+import { mfaChallengeRequired } from './modules/auth/policy.js';
 import { crmRoutes } from './modules/crm/routes.js';
 import { pricingRoutes } from './modules/pricing/routes.js';
 import { quotationRoutes } from './modules/quotations/routes.js';
@@ -39,6 +40,10 @@ import type { FetchLike } from './modules/ai/providers.js';
 export interface BuildOptions { sql?: Sql; logger?: boolean; aiFetch?: FetchLike; mailTransport?: Transporter | null; outboundFetch?: (url: string, init?: RequestInit) => Promise<Response> }
 
 const PASSWORD_CHANGE_ALLOWED = new Set(['/api/v1/auth/me', '/api/v1/auth/change-password', '/api/v1/auth/logout-all']);
+const MFA_CHALLENGE_ALLOWED = new Set([
+  '/api/v1/auth/me', '/api/v1/auth/logout-all', '/api/v1/auth/change-password',
+  '/api/v1/auth/mfa/setup', '/api/v1/auth/mfa/enable', '/api/v1/auth/mfa/verify',
+]);
 
 export async function buildApp(opts: BuildOptions = {}) {
   const app = Fastify({
@@ -70,15 +75,26 @@ export async function buildApp(opts: BuildOptions = {}) {
 
   app.decorate('authenticate', async (req) => {
     let payload;
-    try { payload = await req.jwtVerify<{ sub: string; tid: string; tv: number; role: string }>(); } catch { throw new AppError(401, 'UNAUTHENTICATED', 'Sesi tidak valid atau kedaluwarsa'); }
-    const [u] = await sql`SELECT id, tenant_id, role, email, full_name, customer_id, token_version, is_active, force_password_change
+    try { payload = await req.jwtVerify<{ sub: string; tid: string; tv: number; role: string; mfa?: boolean; purpose?: string }>(); } catch { throw new AppError(401, 'UNAUTHENTICATED', 'Sesi tidak valid atau kedaluwarsa'); }
+    const [u] = await sql`SELECT id, tenant_id, role, email, full_name, customer_id, token_version, is_active,
+                                 force_password_change, mfa_enabled
                           FROM users WHERE id = ${payload.sub} AND tenant_id = ${payload.tid}`;
     if (!u || !u.isActive || u.tokenVersion !== payload.tv) throw new AppError(401, 'UNAUTHENTICATED', 'Sesi sudah dicabut');
     if (u.forcePasswordChange && !PASSWORD_CHANGE_ALLOWED.has(req.routeOptions.url ?? '')) {
       throw new AppError(403, 'PASSWORD_CHANGE_REQUIRED', 'Ganti password terlebih dahulu');
     }
+    const route = req.routeOptions.url ?? '';
+    const enrolled = !!u.mfaEnabled;
+    const needed = mfaChallengeRequired(String(u.role), enrolled);
+    const verified = enrolled && payload.mfa === true && !payload.purpose;
+    // A password-only or MFA-pending token MUST NOT access the business API,
+    // even if it was issued before a role/tenant policy changed.
+    if ((payload.purpose || (needed && !verified)) && !MFA_CHALLENGE_ALLOWED.has(route)) {
+      throw new AppError(403, 'MFA_REQUIRED', 'Verifikasi dua faktor diperlukan');
+    }
     req.authUser = { id: u.id as string, tenantId: u.tenantId as string, role: u.role as string, email: u.email as string,
-      fullName: u.fullName as string, customerId: (u.customerId as string) ?? null, tv: u.tokenVersion as number };
+      fullName: u.fullName as string, customerId: (u.customerId as string) ?? null, tv: u.tokenVersion as number,
+      mfaEnrolled: enrolled, mfaVerified: needed ? verified : !payload.purpose };
   });
 
   app.setErrorHandler((err: FastifyError | AppError | ZodError, req, reply) => {
