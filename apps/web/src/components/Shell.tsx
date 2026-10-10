@@ -42,6 +42,7 @@ export default function Shell({ children }: { children: ReactNode }) {
     api<Me>('/api/v1/auth/me').then((m) => {
       setSession({ user: { id: m.id, email: m.email, fullName: m.fullName, role: m.role, customerId: m.customerId } });
       setMe(m);
+      if ((m as Me & { mfaRequired?: boolean }).mfaRequired) { router.replace('/mfa'); return; }
       if (m.role === 'customer_user' && !path.startsWith('/portal')) router.replace('/portal');
       if (m.permissions.includes('approval.decide')) api('/api/v1/approvals').then((r) => setPending(r.items.length)).catch(() => {});
     }).catch(() => {});
