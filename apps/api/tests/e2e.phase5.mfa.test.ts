@@ -125,4 +125,27 @@ describe('Phase 5 Gate 4B: privileged MFA, anti-replay, tenant access', () => {
     expect(out.status).toBe(200);
     expect((await api(app, enrolledToken).get('/api/v1/customers')).status).toBe(401);
   });
+  it('rate-limits invalid TOTP and locks repeated attempts without leaking secret', async () => {
+    const challenge = await app.inject({ method: 'POST', url: '/api/v1/auth/login',
+      payload: { email: 'companyadmin@defendit360.com', password: NEW_PW } });
+    expect(challenge.statusCode).toBe(200);
+    const caller = api(app, challenge.json().token);
+    const currentStep = Math.floor(Date.now() / 30000);
+    const valid = new Set([-1, 0, 1].map((delta) => totpAt(secret, currentStep + delta)));
+    const bad = ['000000', '111111', '222222', '333333'].find((c) => !valid.has(c))!;
+    for (let i = 1; i <= 5; i++) {
+      const result = await caller.post('/api/v1/auth/mfa/verify', { code: bad });
+      expect(result.status).toBe(i === 5 ? 423 : 403);
+    }
+    const correct = await caller.post('/api/v1/auth/mfa/verify',
+      { code: totpAt(secret, currentStep + 1) });
+    expect(correct.status).toBe(423);
+    const [u] = await sql`SELECT mfa_failed_attempts, mfa_locked_until, mfa_secret_enc FROM users
+      WHERE email = 'companyadmin@defendit360.com'`;
+    expect(u.mfaFailedAttempts).toBe(5);
+    expect(u.mfaLockedUntil).not.toBeNull();
+    expect(u.mfaSecretEnc).toMatch(/^v1:/);
+    expect(u.mfaSecretEnc).not.toContain(secret);
+  });
+
 });
