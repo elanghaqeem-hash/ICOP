@@ -1,0 +1,63 @@
+name: ICOP Cloudflare adapter validation (preview only)
+
+on:
+  push:
+    branches:
+      - fix/cloudflare-workers-build-20261010
+
+# This job NEVER deploys to Cloudflare.
+# It is restricted to the proposed fix branch, and commits the dependency lock
+# only after the adapter successfully builds and Wrangler bundles the Worker.
+permissions:
+  contents: write
+
+concurrency:
+  group: icop-cloudflare-validation-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout proposed repair branch
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - name: Install existing locked Next.js dependencies
+        working-directory: apps/web
+        run: npm ci
+      - name: Pin Cloudflare adapter and Wrangler, regenerate lockfile
+        working-directory: apps/web
+        run: |
+          npm install --save-exact @opennextjs/cloudflare@1.20.9
+          npm install --save-dev --save-exact wrangler@4.149.0
+      - name: Verify Next.js TypeScript
+        working-directory: apps/web
+        run: npm run typecheck
+      - name: Build Worker bundle with OpenNext
+        working-directory: apps/web
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+        run: npx opennextjs-cloudflare build
+      - name: Bundle Workers without deployment
+        working-directory: apps/web
+        run: npx wrangler deploy --dry-run
+      - name: Audit production web dependencies
+        working-directory: apps/web
+        run: npm audit --omit=dev --audit-level=high
+      - name: Persist tested versions on fix branch only
+        run: |
+          git add apps/web/package.json apps/web/package-lock.json
+          if ! git diff --cached --quiet; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -m "build(cloudflare): lock tested OpenNext and Wrangler versions"
+            git push origin HEAD:fix/cloudflare-workers-build-20261010
+          fi
