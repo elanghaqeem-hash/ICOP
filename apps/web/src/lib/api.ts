@@ -12,9 +12,12 @@ export function setSession(session: Session | null) { currentSession = session; 
 
 function csrfHeaders(): Record<string, string> {
   if (typeof document === 'undefined') return {};
-  const name = location.protocol === 'https:' ? '__Host-icop-csrf' : 'icop-dev-csrf';
-  const raw = document.cookie.split('; ').find((c) => c.startsWith(name + '='));
-  return raw ? { 'x-icop-csrf': decodeURIComponent(raw.slice(name.length + 1)) } : {};
+  const values = document.cookie.split('; ');
+  for (const name of ['__Host-icop-csrf', 'icop-dev-csrf']) {
+    const raw = values.find((c) => c.startsWith(name + '='));
+    if (raw) return { 'x-icop-csrf': decodeURIComponent(raw.slice(name.length + 1)) };
+  }
+  return {};
 }
 
 export class ApiError extends Error {
