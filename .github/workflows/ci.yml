@@ -42,6 +42,9 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: apps/api/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
       - name: Install OCR/PDF test prerequisites
         run: |
           sudo apt-get update -qq
