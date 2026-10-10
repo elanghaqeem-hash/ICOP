@@ -1,5 +1,5 @@
-# Hostinger production secrets and copied deployment state.
-infra/hostinger/.env.production
-infra/hostinger/.env.production.*
-!infra/hostinger/.env.production.example
-infra/hostinger/backups/
+# Local Hostinger environment and secret backups (relative to this directory).
+.env.production
+.env.production.*
+!.env.production.example
+backups/
