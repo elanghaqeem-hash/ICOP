@@ -27,8 +27,8 @@ The new snapshot uses alternate browser auth (Fastify-set cookies) and TOTP reco
 
 | Feature from uploaded sources | Scope | State on this branch |
 |---|---|---|
-| Business calendar, public holidays, per-contract SLA | Schema + source business time functions, ticket pause/resume | **Schema imported**; SLA runtime/UI UAT pending |
-| Credit notes (DPP + PPN, refund, maker-checker) | API + invoice UI + SoD + MFA recency + regression | **Implemented on this branch**, CI pending |
+| Business calendar, public holidays, per-contract SLA | Schema + Jakarta time calculator, fallback policy, ticket pause/resume, admin and contract UI | **Implementation integrated in branch**, API regressions and UAT pending |
+| Credit notes (DPP + PPN, refund, maker-checker) | API + invoice UI + SoD + MFA recency + 5 PostgreSQL tests | **149/149 API tests PASS** on CI run [38043959718](https://github.com/elanghaqeem-hash/ICOP/actions/runs/38043959718); newest SLA additions require fresh CI |
 | Full-text search indexes | document pages, proposal sections, tender requirements, verified facts | **Schema imported**, complete RAG UI pending |
 | Tender Assistant | readiness brief, grounded RKS QA, compliance suggestion review | Pending controlled transfer, grounding tests |
 | Customer chatbot and KB | deterministic per-customer data, public articles only, approval workflow, handoff to ticket | Pending; do not expose cross-customer data |
@@ -52,3 +52,14 @@ The new snapshot uses alternate browser auth (Fastify-set cookies) and TOTP reco
 Uploaded `docs/19-UAT-Pack.md` includes scenarios U01–U32 (not necessarily consecutive IDs) across authentication, quotation/DoA, tender, chatbot, SLA, billing, accounting and integrations. Reuse the scenarios as **acceptance specifications**, not as proof of completed deployment. Scenario U14 governs credit notes. U15–U17 cover calendar/contract/pause SLA. U27–U32 cover tender assistant, KB, chatbot, semantic search and accounting.
 
 Release remains blocked by: live staging HTTPS and secrets, malware-scan/upload review, full tenant-scope negative tests, backups/restores, independent pentest, verified MFA recovery SOP, Finance-approved chart of accounts and actual provider sandbox runs. Keep both PRs in Draft until gate sign-off.
+
+
+## SLA acceptance derived from uploaded Phase 6 tests
+
+- `apps/api/src/lib/businessTime.ts`: deterministic Asia/Jakarta calculation; weekends and administrator-maintained holidays excluded in BUSINESS mode.
+- `apps/api/src/modules/helpdesk/routes.ts`: effective contract/tenant/default SLA is applied when tickets are opened or priority changes; P1/P2 default 24x7, P3/P4 default working hours. A paused ticket stops resolution breach checks until customer reply unpauses and extends resolution.
+- `/api/v1/helpdesk/calendar`, `/api/v1/helpdesk/holidays`, `/api/v1/contracts/:id/sla`: tenant-aware policy management and audit events.
+- UI: `/helpdesk/settings` and contract detail use source-informed SLA editor. Input must reflect the signed contract, never automatically assert the policy is legally valid.
+- `apps/api/tests/e2e.phase6.sla.test.ts`: weekend/holiday date vectors, admin authority, tenant calendar, contract SLA precedence, pause and resume (new tests on branch; CI outcome must be verified).
+
+**Regulatory reminder:** Default service windows are configurable product policies, not a contractual or regulatory assertion. Admin must verify Indonesian national holidays and joint leave against the approved official calendar for the period.
