@@ -20,6 +20,7 @@ import { quotationRoutes } from './modules/quotations/routes.js';
 import { aiRoutes } from './modules/ai/routes.js';
 import { dashboardRoutes } from './modules/dashboard/routes.js';
 import { tenderRoutes } from './modules/tenders/routes.js';
+import { tenderAssistantReadRoutes } from './modules/tenders/assistant-read.js';
 import { proposalRoutes } from './modules/proposals/routes.js';
 import { vendorRoutes } from './modules/vendors/routes.js';
 import multipart from '@fastify/multipart';
@@ -127,6 +128,7 @@ export async function buildApp(opts: BuildOptions = {}) {
   await app.register(aiRoutes, { fetchImpl: opts.aiFetch });
   await app.register(dashboardRoutes);
   await app.register(tenderRoutes, { fetchImpl: opts.aiFetch });
+  await app.register(tenderAssistantReadRoutes);
   await app.register(proposalRoutes, { fetchImpl: opts.aiFetch });
   await app.register(vendorRoutes);
   await app.register(documentRoutes);
