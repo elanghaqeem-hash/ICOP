@@ -90,3 +90,17 @@ Seluruh rekomendasi Phase 0 disetujui: `PRICING-BRD2 v2` dan `DOA-MP-2026 v2` ak
 ## GitHub CI dan hardening awal (Phase 5)
 
 Workflow `.github/workflows/ci.yml` menjalankan typecheck, build, suite regresi API dengan PostgreSQL serta `npm audit --omit=dev --audit-level=high` setiap pull request. Status workflow terbaru harus dicek langsung di GitHub. Variabel produksi `DB_PASSWORD`/`DATABASE_URL`, `JWT_SECRET`, `SEED_PASSWORD` diwajibkan; Swagger UI nonaktif dan `TRUST_PROXY=false` secara default pada production. Panduan gate di [`docs/18`](docs/18-Phase5-Security-and-Release-Checklist.md).
+
+
+## Phase 5 — Gate 4A–4C (implementasi GitHub per 10 Oktober 2026)
+
+Sumber baseline Phase 1–4 dan README Phase 5 berasal dari arsip yang diunggah owner. **README terbaru yang diterima memiliki konten identik dengan README pada arsip Phase 5 terdahulu**, sehingga source lama tidak menimpa pengembangan pada branch. Status implementasi saat ini harus dilihat dari GitHub PR dan CI, bukan semata laporan gate historis.
+
+| Gate | Implementasi | Bukti |
+|---|---|---|
+| 4A — browser authentication | Next.js BFF, session cookie `httpOnly/Secure/SameSite`, CSRF/Origin, login/logout, password rotation | `docs/19-Phase5-Session-BFF-and-CSRF.md` |
+| 4B — privileged MFA | TOTP terenkripsi, challenge login, replay guard, lockout dan UI mobile | `docs/20-Phase5-Gate4B-TOTP-MFA-and-Tenant-Isolation.md` |
+| 4C — approval step-up | TOTP 5-menit untuk keputusan, verifikasi ulang langsung dari Decision Center | `docs/21-Phase5-Gate4C-Stepup-Tenant-Recovery.md` |
+| 4C — tenant & recovery | Negative tests 8 modul dan proses recovery MFA dua administrator + audit | `docs/21-Phase5-Gate4C-Stepup-Tenant-Recovery.md` |
+
+**Terakhir diverifikasi:** 144 tes API lulus pada commit `8bfd99e8`, GitHub Actions [run 38040624016](https://github.com/elanghaqeem-hash/ICOP/actions/runs/38040624016) 4/4 PASS. Commit dokumentasi setelahnya perlu mengikuti CI terbaru. Ini **belum** persetujuan produksi; PR [#1](https://github.com/elanghaqeem-hash/ICOP/pull/1) masih Draft, belum di-merge. MFA recovery memerlukan dua admin yang masing-masing berhasil MFA; proses break-glass ketika keduanya kehilangan MFA masih memerlukan SOP resmi.
