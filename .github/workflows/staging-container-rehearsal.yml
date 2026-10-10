@@ -1,5 +1,13 @@
 name: ICOP Staging Container Rehearsal (no deployment)
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/api/**'
+      - 'apps/web/**'
+      - 'docker-compose.staging.yml'
+      - '.github/workflows/staging-container-rehearsal.yml'
+      - 'infra/staging/**'
   pull_request:
     branches: [main]
     paths:
@@ -29,6 +37,7 @@ jobs:
           dbpass="$(openssl rand -hex 24)"
           jwt="$(openssl rand -hex 48)"
           master="$(openssl rand -hex 32)"
+          seedpass="Aa9!$(openssl rand -hex 20)"
           cat > .env <<EOF
           NODE_ENV=production
           DB_HOST=postgres
@@ -39,6 +48,7 @@ jobs:
           DATABASE_URL=postgres://icop_ci:${dbpass}@postgres:5432/icop_staging_ci
           JWT_SECRET=${jwt}
           SECRETS_MASTER_KEY=${master}
+          SEED_PASSWORD=${seedpass}
           ALLOWED_ORIGINS=http://127.0.0.1:3000
           APP_PUBLIC_ORIGIN=http://127.0.0.1:3000
           API_INTERNAL_URL=http://api:3001
@@ -68,6 +78,11 @@ jobs:
         run: docker compose -f docker-compose.staging.yml --profile migration run --rm migrate
       - name: Validate schema 013 using read-only preflight
         run: docker compose -f docker-compose.staging.yml run --rm api node dist/migration-preflight.js --target=post
+      - name: Bootstrap explicitly approved synthetic users in disposable CI DB only
+        run: |
+          set -euo pipefail
+          docker compose -f docker-compose.staging.yml run --rm api node dist/migrate.js --seed
+          docker compose -f docker-compose.staging.yml exec -T postgres sh -c 'PGPASSWORD="$POSTGRES_PASSWORD" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atqc "SELECT count(*) FROM users"' | grep -Eq '^[1-9][0-9]*$'
       - name: Rehearse backup and restore to a second disposable DB
         shell: bash
         run: |
@@ -77,9 +92,15 @@ jobs:
           docker compose -f docker-compose.staging.yml exec -T postgres sh -c 'PGPASSWORD="$POSTGRES_PASSWORD" createdb -U "$POSTGRES_USER" icop_restore_ci'
           docker compose -f docker-compose.staging.yml exec -T postgres sh -c 'PGPASSWORD="$POSTGRES_PASSWORD" pg_restore -U "$POSTGRES_USER" -d icop_restore_ci' < /tmp/icop-ci-staging.dump
           docker compose -f docker-compose.staging.yml exec -T postgres sh -c 'PGPASSWORD="$POSTGRES_PASSWORD" psql -U "$POSTGRES_USER" -d icop_restore_ci -Atqc "SELECT name FROM schema_migrations"' | grep -Fxq '013_phase6_tender_suggestions.sql'
-          echo "PASS: explicit migration 013 survived backup/restore to isolated database"
+          users_before="$(docker compose -f docker-compose.staging.yml exec -T postgres sh -c 'PGPASSWORD="$POSTGRES_PASSWORD" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atqc "SELECT count(*) FROM users"')"
+          users_after="$(docker compose -f docker-compose.staging.yml exec -T postgres sh -c 'PGPASSWORD="$POSTGRES_PASSWORD" psql -U "$POSTGRES_USER" -d icop_restore_ci -Atqc "SELECT count(*) FROM users"')"
+          test "$users_before" -gt 0
+          test "$users_before" = "$users_after"
+          echo "PASS: versioned schema and synthetic test accounts survived backup/restore"
       - name: Start API and frontend only after approved schema is present
         run: docker compose -f docker-compose.staging.yml up -d --wait api web
+      - name: Verify real API authentication, token rotation and tenant AI flag
+        run: docker compose -f docker-compose.staging.yml exec -T api node --input-type=module - < infra/staging/staging-api-smoke.mjs
       - name: Verify local BFF -> private API, anonymous access and CSRF
         shell: bash
         run: |
