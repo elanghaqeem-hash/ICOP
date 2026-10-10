@@ -4,6 +4,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { api, apiDownload, apiUpload, dt, idr, newKey } from '@/lib/api';
 import { Badge, ErrorBox, Field, Loading, PageHead, useAction, useApi, useMe } from '@/components/ui';
+import TenderEvidenceAssistant from '@/components/TenderEvidenceAssistant';
 
 const KINDS = ['RKS', 'KAK', 'TOR', 'ADDENDUM', 'AANWIJZING_MOM', 'SUBMISSION_PROOF', 'EVALUATION', 'AWARD_LETTER', 'OTHER'];
 const STATUSES = ['UNREVIEWED', 'COMPLY', 'PARTIAL', 'NON_COMPLY', 'NOT_APPLICABLE', 'CLARIFY'];
@@ -27,7 +28,7 @@ export default function TenderWorkspace() {
     await api(`/api/v1/tenders/${id}/status`, { body: { to, note } }); reload();
   });
   const tabs: [string, string][] = [['overview', 'Ringkasan'], ['docs', `Dokumen (${data.documents.length})`], ['reqs', `Persyaratan (${data.requirements.length})`],
-    ['bid', 'Bid/No-Bid'], ['clar', `Klarifikasi (${data.clarifications.length})`], ['proposal', `Proposal (${data.proposals.length})`]];
+    ['assistant', 'Asisten Tender'], ['bid', 'Bid/No-Bid'], ['clar', `Klarifikasi (${data.clarifications.length})`], ['proposal', `Proposal (${data.proposals.length})`]];
 
   return (
     <>
@@ -68,6 +69,7 @@ export default function TenderWorkspace() {
       )}
       {tab === 'docs' && <Documents id={id} docs={data.documents} canWrite={!!w} onDone={reload} />}
       {tab === 'reqs' && <Requirements id={id} code={t.code} reqs={data.requirements} canWrite={!!w} onDone={reload} />}
+      {tab === 'assistant' && <TenderEvidenceAssistant tenderId={id} />}
       {tab === 'bid' && <Bid id={id} data={data} canWrite={!!w} onDone={reload} />}
       {tab === 'clar' && <Clarifications id={id} items={data.clarifications} reqs={data.requirements} canWrite={!!w} onDone={reload} />}
       {tab === 'proposal' && (

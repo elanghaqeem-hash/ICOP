@@ -16,6 +16,7 @@ const NAV = [
   { href: '/flexguard', label: 'FlexGuard', ico: '◈', perm: 'flexguard.read', mobile: false },
   { href: '/documents', label: 'Dokumen', ico: '▢', perm: 'documents.read', mobile: false },
   { href: '/helpdesk', label: 'Helpdesk', ico: '☎', perm: 'helpdesk.read', mobile: false },
+  { href: '/helpdesk/settings', label: 'Kalender SLA', ico: '◷', perm: 'helpdesk.read', mobile: false },
   { href: '/billing', label: 'Tagihan', ico: '¤', perm: 'billing.read', mobile: false },
   { href: '/templates', label: 'Template legal', ico: '¶', perm: 'template.read', mobile: false },
   { href: '/approvals', label: 'Approval', ico: '✓', perm: 'approval.read', mobile: true },

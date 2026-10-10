@@ -63,6 +63,7 @@ export const PERMISSIONS: Record<string, Role[]> = {
   'template.approve': ['legal'],
   'billing.read': [...SALES_MGMT, 'pricing_finance', 'project_manager', 'auditor', 'legal'],
   'billing.write': ['pricing_finance', 'company_admin'],
+  'billing.approve': ['pricing_finance', 'company_admin', 'director', 'vp_head'],
   'project.timesheet': ['delivery_engineer', 'project_manager', 'presales_engineer', 'solution_architect', 'soc_operations'],
   'helpdesk.read': INTERNAL.filter((r) => r !== 'partner_user'),
   'helpdesk.work': ['soc_operations', 'delivery_engineer', 'project_manager', 'presales_engineer', 'account_manager', 'sales_manager', 'vp_head', 'director', 'company_admin'],

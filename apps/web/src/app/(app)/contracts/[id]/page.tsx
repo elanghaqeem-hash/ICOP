@@ -4,6 +4,7 @@ import { useParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { api, apiDownload, apiUpload, dt, idr, newKey } from '@/lib/api';
 import { Badge, ErrorBox, Field, Loading, PageHead, useAction, useApi, useMe } from '@/components/ui';
+import SlaEditor from '@/components/SlaEditor';
 
 const LABEL: Record<string, string> = {
   identitas_para_pihak: 'Identitas para pihak & kewenangan penandatangan', ruang_lingkup_sesuai_penawaran: 'Ruang lingkup sesuai penawaran/SOW', nilai_dan_pajak: 'Nilai & pajak (PPN)',
@@ -16,6 +17,7 @@ export default function ContractDetail() {
   const me = useMe();
   const perms = me?.permissions ?? [];
   const { data, error, loading, reload } = useApi(`/api/v1/contracts/${id}`);
+  const contractSla = useApi(`/api/v1/contracts/${id}/sla`);
   const act = useAction();
   const [edit, setEdit] = useState<any>(null);
   const [check, setCheck] = useState<Record<string, boolean>>({});
@@ -201,6 +203,16 @@ export default function ContractDetail() {
             )}
           </>
         )}
+      </div>
+
+      <div className="card">
+        <h2>SLA layanan berdasarkan kontrak</h2>
+        <p className="sub">Klausul SLA yang disahkan di kontrak berlaku lebih dahulu daripada kebijakan tenant. Prioritas tanpa klausul menggunakan standar tenant/default. Pastikan target sesuai PKS yang ditandatangani.</p>
+        <ErrorBox error={contractSla.error}/>
+        {contractSla.loading ? <Loading/> :
+          <SlaEditor initial={contractSla.data?.items ?? []}
+            endpoint={`/api/v1/contracts/${id}/sla`} mode="contract"
+            canEdit={canWrite} onSaved={contractSla.reload}/>}
       </div>
 
       <div className="card">

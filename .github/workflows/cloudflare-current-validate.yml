@@ -1,0 +1,49 @@
+name: ICOP Cloudflare - latest Phase 6 adapter validation (no deploy)
+
+on:
+  push:
+    branches: [fix/cloudflare-phase6-current-build]
+  pull_request:
+    branches: [feature/phase6-source-reconciliation]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: icop-cloudflare-current-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - name: Verify pinned frontend dependencies
+        working-directory: apps/web
+        run: npm ci
+      - name: Typecheck
+        working-directory: apps/web
+        run: npm run typecheck
+      - name: Build Next.js Worker adapter
+        working-directory: apps/web
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+        run: npx opennextjs-cloudflare build
+      - name: Validate Node Next.js BFF auth and CSRF HTTP behavior
+        working-directory: apps/web
+        run: node tests/auth-bff-smoke.mjs
+      - name: Validate Wrangler app directory (without publishing)
+        working-directory: apps/web
+        run: npx wrangler deploy --dry-run
+      - name: Validate repository-root deploy-only path (without publishing)
+        run: npx --yes wrangler@4.149.0 deploy --dry-run
+      - name: Production dependency audit
+        working-directory: apps/web
+        run: npm audit --omit=dev --audit-level=high
