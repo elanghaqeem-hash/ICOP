@@ -82,3 +82,12 @@ docker compose -f docker-compose.staging.yml up -d --wait api web
 **Automated non-production rehearsal:** `.github/workflows/staging-container-rehearsal.yml` builds both containers, creates random throwaway CI credentials and a clean PostgreSQL 16 volume, verifies that API startup without migrations is blocked, manually runs migrations, performs read-only postflight, dumps and restores to a distinct DB, then checks /login HTTP 200, anonymous BFF HTTP 401, malicious Origin POST HTTP 403, and no API/Postgres published host ports. CI teardown deletes volumes and ephemeral secrets. This DOES NOT access or prove safety of real staging or production backups.
 
 **Deployment and operational gates are still BLOCKED:** real DNS/TLS, secret distribution, database backups/restore, identity/MFA UAT, privacy/provider contractual approvals, mobile user acceptance and pen-test results remain unavailable. Do not enable `tender_compliance` on any customer tenant automatically.
+
+
+## Incremental post-merge staging gate — synthetic identity and restoration
+
+The container rehearsal now runs on PRs and **on pushes to `main`**, so the exact promoted release commit receives container-level integration checks rather than only source build checks.
+
+In **disposable CI PostgreSQL only**, the workflow first applies versioned migrations without a seed, then explicitly provisions synthetic test users with a CI-randomized password. It verifies the synthetic users survive a dump/restore into a second PostgreSQL database and exercises a real Fastify API login, required initial password change, rejection of the old JWT and confirmed default-OFF `tender_compliance` feature.
+
+This step is **not a customer staging provisioning command**. It intentionally does not seed or create demo accounts on real staging or production. The synthetic password exists only for the throwaway CI job; no user credentials or JWTs are printed. Do not deploy against real tenant data or run the CI fixture on any persistent DB. The previous HTTPS, MFA with two real operators, provider retention agreement, DPA/PII, backup encryption and restore evidence, and penetration-test gates are still outstanding.
