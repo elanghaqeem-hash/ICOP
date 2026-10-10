@@ -1,0 +1,122 @@
+# ICOP CyberBusiness 360 | Hostinger VPS only | source: GitHub main
+# Explicitly isolated from Cloudflare development; never use staging credentials.
+# Use: docker compose --env-file infra/hostinger/.env.production -f docker-compose.hostinger.yml config --quiet
+name: icop-production
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:?DB_NAME is required}
+      POSTGRES_USER: ${DB_USER:?DB_USER is required}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [internal_net]
+    # Deliberately NO published database port.
+
+  migrate:
+    profiles: [migration]
+    build:
+      context: ./apps/api
+    env_file:
+      - ./infra/hostinger/.env.production
+    environment:
+      NODE_ENV: production
+      DB_HOST: postgres
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      RUN_SEED: "false"
+    depends_on:
+      postgres: { condition: service_healthy }
+    networks: [internal_net]
+    command: ["node", "dist/migrate.js"]
+    restart: "no"
+    # One-shot only after backup and explicit operator approval.
+
+  api:
+    build:
+      context: ./apps/api
+    restart: unless-stopped
+    env_file:
+      - ./infra/hostinger/.env.production
+    environment:
+      NODE_ENV: production
+      DB_HOST: postgres
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      HOST: 0.0.0.0
+      PORT: 3001
+      RUN_SEED: "false"
+      ESIGN_SANDBOX_ENABLED: "false"
+      API_DOCS_ENABLED: "false"
+      TRUST_PROXY: "false"
+      DOCUMENT_DIR: /app/storage/documents
+      UPLOAD_DIR: /app/storage/uploads
+    volumes:
+      - api_storage:/app/storage
+    depends_on:
+      postgres: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    security_opt: ["no-new-privileges:true"]
+    networks: [internal_net]
+    # Do not publish port 3001.
+
+  web:
+    build:
+      context: ./apps/web
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      API_INTERNAL_URL: http://api:3001
+      APP_PUBLIC_ORIGIN: https://${ICOP_DOMAIN:?ICOP_DOMAIN is required}
+      NEXT_TELEMETRY_DISABLED: "1"
+    depends_on:
+      api: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/login').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    security_opt: ["no-new-privileges:true"]
+    networks: [internal_net]
+    # No public 3000.
+
+  edge:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      ICOP_DOMAIN: ${ICOP_DOMAIN:?ICOP_DOMAIN is required}
+      ACME_EMAIL: ${ACME_EMAIL:?ACME_EMAIL is required}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./infra/hostinger/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      web: { condition: service_healthy }
+    security_opt: ["no-new-privileges:true"]
+    networks: [internal_net]
+
+networks:
+  internal_net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  api_storage:
+  caddy_data:
+  caddy_config:
