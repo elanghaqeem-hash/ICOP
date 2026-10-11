@@ -18,6 +18,7 @@ export const PRIVILEGED_MFA_ROLES = Object.freeze([
 // unlisted permission names instead of assuming implicit superadmin privilege.
 // Full parity with source RBAC must be signed off before access is enabled.
 const ALLOWED = Object.freeze({
+  'auth.me': ROLES,
   'user.manage': ['company_admin', 'super_admin'],
   'audit.read': ['auditor', 'company_admin', 'super_admin', 'director'],
   'approval.decide': ['sales_manager', 'vp_head', 'director'],
