@@ -118,10 +118,19 @@ A follow-up read confirmed:
 `ACCESS_IDENTITY_ENABLED=false`, `ACCESS_MFA_CONFIRMED=false`,
 `ACCESS_AUD` unchanged and `DB` still bound to `icop-staging-db`.
 
-This is **settings synchronization only**. It is NOT proof that the latest
-GitHub `src/access-identity.mjs` module was redeployed. Do not toggle either
-flag to true until the exact deployed source and authorized MFA login are
-verified. Production `icop` was never targeted.
+The **source deployment is also completed and verified**: the currently
+installed `access-identity.mjs` was an exact snapshot of the GitHub helper
+minus its separate MFA gate. A guarded staging-only multi-module Worker upload
+added precisely the tested `STAGING_MFA_GATE_PENDING` check, leaving
+`worker.mjs`, Access audience and D1 wiring unchanged. Cloudflare returned
+HTTP 200, and a postdeploy module fingerprint matched the current GitHub
+`access-identity.mjs`. Both live flags remain `false`. Production `icop`
+was not targeted.
+
+**Important:** A deployed gate and enabled Cloudflare independent MFA are
+NOT proof of a completed interactive MFA challenge, nor an ICOP application
+login. Do not set either flag `true` until the approved MFA enrollment,
+tenant D1 mapping, audit HMAC secret and UAT sign-off are recorded.
 
 ### Synthetic DEIT identity UAT
 
