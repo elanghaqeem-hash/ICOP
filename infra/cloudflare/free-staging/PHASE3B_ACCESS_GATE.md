@@ -1,6 +1,6 @@
 # ICOP Stage 3B — Cloudflare Access gate
 
-Status: **PARTIALLY INTEGRATED / NOT RELEASE READY**
+Status: **ACCESS + APP MFA CONFIGURED / REAL MFA UAT PENDING / NOT RELEASE READY**
 Verified against connected Cloudflare account on 2026-10-12 (Indonesia).
 Environment: `icop-staging-api` ONLY; never `icop` production.
 
@@ -13,8 +13,8 @@ Environment: `icop-staging-api` ONLY; never `icop` production.
 | Access app audience | `de8e1d54820b7a0c1ddbfc808f589e14ba04555256df734a0bea328476e0c904` | Matches Worker `ACCESS_AUD` |
 | Identity provider | Cloudflare account | Configured |
 | Access policy | `Cloudflare account members`, decision `allow` | Account members; not a single named admin |
-| Policy `require` rules | **Empty array** | **MFA requirement NOT proven** |
-| Access session duration | 6 hours | Configured |
+| Policy `require` rules | Empty array; no explicit MFA override | Inherits application's independent MFA settings; check enforcement with real sign-in |
+| Access session duration | 6 hours | Configured |\n| MFA application configuration | `mfa_disabled=false`; `totp`, `biometrics`, `security_key`; 6h | **Applied to staging and verified through Cloudflare API** |\n| Real MFA challenge (approved user) | Not tested | **UAT required before login activation** |
 | Worker `ACCESS_IDENTITY_ENABLED` | `false` | Safe: explicitly disabled |
 | Worker D1 | `icop-staging-db` | Bound |
 | Staging tenant `DEIT` | Not provisioned; real DB has 0 tenants | BLOCKED |
@@ -42,12 +42,7 @@ an Access bypass or disable the application merely to make CI pass.
 
 ## Next steps in Cloudflare Dashboard (owner approval required)
 
-1. In Zero Trust > Access controls > Access settings, configure independent
-   MFA methods (TOTP or security key / passkey as available). Choose a suitable
-   reauthentication duration and avoid changing unrelated applications.
-2. In Zero Trust > Access controls > Applications, edit only the staging
-   application. **Enforce MFA explicitly** at its application/policy level,
-   not just by assuming all Cloudflare account members have MFA.
+1. Cloudflare organization now allows independent MFA (`totp`, `biometrics`,\n   `security_key`). The staging application has been configured with\n   `mfa_disabled=false` and a 6-hour MFA duration. **Do not change other apps.**\n2. Perform an interactive, authorized staging sign-in to confirm the MFA\n   challenge and MFA device enrollment; inspect that the Allow policy has no\n   overriding `mfa_config` disabling MFA. A configuration read-back alone\n   cannot establish end-to-end MFA enforcement.
 3. Consider limiting the Allow policy to named staging administrators
    instead of every member of the Cloudflare account. Keep a reviewed
    emergency administrator path to avoid lockout.
@@ -107,3 +102,26 @@ https://developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings
 - Cloudflare MFA policy requirements: https://developers.cloudflare.com/cloudflare-one/access-controls/policies/mfa-requirements/
 
 **Do not merge PR #20 to production. Do not deploy to production.**
+
+## MFA update — staging only (12 October 2026)
+
+Cloudflare app ID `f61e1cef-4104-4e94-aa85-81b59ea0708e` was updated
+using the authorized Cloudflare API. A subsequent **GET** confirmed:
+
+- `mfa_config.mfa_disabled = false`
+- `mfa_config.allowed_authenticators = [totp, biometrics, security_key]`
+- `mfa_config.session_duration = 6h`
+- Existing self-hosted Worker destination and single Allow policy preserved.
+- Policy MFA override absent; app-level settings apply unless later changed.
+- No change to production Worker, `icop` account permissions or D1 user data.
+
+**Still not verified:** actual interactive MFA prompt, authenticators enrolled,
+authorized user's email mapping to DEIT, password rotation, in-app MFA/session
+issuance, recovery flows, tenant RBAC or business modules. Do not enable
+`ACCESS_IDENTITY_ENABLED`, create Superadmin, or merge to production.
+
+Manual MFA UAT: open the staging API URL in a fresh private browser window,
+authenticate with an explicitly allowed Cloudflare account, and confirm
+additional MFA challenge (or valid already-enrolled, unexpired independent
+MFA session), then deny a separate unauthorized identity. Never publish the
+MFA codes, recovery keys, session cookies or Access JWT in GitHub/chat.
