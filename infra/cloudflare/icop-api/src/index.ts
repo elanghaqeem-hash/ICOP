@@ -1,5 +1,4 @@
 import { Container, getContainer } from '@cloudflare/containers';
-import { env as workerEnv } from 'cloudflare:workers';
 
 /**
  * Internal-only Cloudflare API gateway. The public Next.js Worker calls this
@@ -17,8 +16,6 @@ type IcopEnvironment = {
   ALLOWED_ORIGINS: string;
 };
 
-const settings = workerEnv as unknown as IcopEnvironment;
-
 export class IcopApiContainer extends Container {
   defaultPort = 3001;
   sleepAfter = '30m';
@@ -34,10 +31,6 @@ export class IcopApiContainer extends Container {
     // Keep it disabled until a separately-tested background worker is deployed.
     SCHEDULER_ENABLED: 'false',
     JOB_WORKER_ENABLED: 'false',
-    DATABASE_URL: settings.DATABASE_URL,
-    JWT_SECRET: settings.JWT_SECRET,
-    SECRETS_MASTER_KEY: settings.SECRETS_MASTER_KEY,
-    ALLOWED_ORIGINS: settings.ALLOWED_ORIGINS,
   };
 }
 
@@ -63,7 +56,11 @@ export default {
     try {
       // One instance only in the initial gate: rate limits and cron/background jobs
       // must be redesigned and tested before horizontal scale-out.
-      return await getContainer(env.ICOP_CONTAINER, 'icop-primary').fetch(request);
+      const container = getContainer(env.ICOP_CONTAINER, 'icop-primary');
+      // Secret forwarding is intentionally not enabled in this scaffold.
+      // Gate: implement secure per-instance secret injection using the official
+      // Cloudflare Container lifecycle before the first staging rollout.
+      return await container.fetch(request);
     } catch {
       return new Response(JSON.stringify({ code: 'API_UNAVAILABLE' }),
         { status: 502, headers: noStore });
