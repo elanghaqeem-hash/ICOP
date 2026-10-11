@@ -78,3 +78,26 @@ Workers Free CPU limits, MFA secret protection and rotation, lockout and
 revocation, RBAC/SoD, server-side session/token protection, append-only
 auditing of all auth events, tenant isolation tests, abuse throttling, and
 approval of secure provisioning (never a hardcoded shared seed password).
+
+## Verified incremental release — 11 October 2026 (staging only)
+
+The isolated Cloudflare D1 database `icop-staging-db` has now successfully
+applied migration `0002_cf_free_identity_audit_schema` via the Cloudflare
+D1 API. Read-only verification confirmed:
+
+- Both `0001` and `0002` migrations are recorded.
+- Empty tables `tenants`, `users`, and `audit_events` exist.
+- SQLite triggers `audit_events_immutable_update` and
+  `audit_events_immutable_delete` exist.
+- Database row counts for tenants/users/audit events: **0 / 0 / 0**.
+- Worker `icop-staging-api` was updated with a new schema readiness signal.
+- Cloudflare staging Worker is distinct from production Worker `icop`.
+- No real login, access-policy bypass, or production release is enabled.
+
+The repository identity-schema regression tests cover role enum rejection,
+tenant-scoped email uniqueness, cross-tenant actor FK rejection, MFA/password
+change defaults and audit UPDATE/DELETE denial. These are **schema-level**
+tests, not a replacement for application-level tenant filtering or full UAT.
+Final release gates still require real authentication/MFA, secret handling,
+abuse prevention, tenant data-access negative tests, restore rehearsal and
+module-by-module PostgreSQL -> D1 migration.
