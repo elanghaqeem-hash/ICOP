@@ -190,3 +190,34 @@ clock sources, idempotent lockouts, rate limiting on both IP and identity,
 recovery code generation/storage/revocation, concurrent device/session
 policies, password change flows, encrypted at-rest TOTP secret handling,
 tenant-specific RBAC and data residency; run negative and real browser UAT.
+
+
+## Phase 3B security remediation — audit privacy and Access gating
+
+- Cloudflare API reports `access.api.error.not_enabled` for this account.
+  **Do not** set `ACCESS_IDENTITY_ENABLED=true` or provision user mappings
+  until the owner enables Cloudflare Access and restricts the application
+  with an explicit verified access policy and MFA requirements.
+- `GET /api/v1/auth/access-me` remains **disabled by default** and
+  `POST /api/v1/auth/login` remains 503; neither is usable for ICOP login.
+- Prior to creating any ICOP session, a verified Access identity may only
+  receive a 202 onboarding-pending response with **no** role, user ID,
+  full name, or password-change flag disclosed.
+- If this feature is ever enabled, the Worker additionally requires a
+  **staging-only `ACCESS_AUDIT_HMAC_KEY`** (64 hexadecimal characters from a
+  cryptographically secure generator). It uses HMAC-SHA256 to pseudonymize
+  the Cloudflare-origin IP before writing tenant-scoped audit history.
+  Missing key, missing/invalid trusted origin IP, D1 failure, or unsuccessful
+  audit write all return a non-success response.
+- Audit HMAC keys must be injected as Worker **secrets**, never committed to
+  Git or exposed to browsers. Rotate with a documented retention policy.
+  HMAC audit pseudonyms are not plaintext IP addresses; verify whether UAT
+  U24/regulatory recordkeeping specifically requires retrievable source IP
+  and define a separate audited approach if so.
+- New negative tests cover missing audit secrets, missing IP, malformed D1
+  writes, forged browser identity headers, inactive identities, and
+  authorization-denied tenant mappings.
+- These tests provide secure default behavior, **not** proof of operational
+  Access, encrypted MFA secrets, password reset, or signed-in user sessions.
+
+Reference: https://developers.cloudflare.com/workers/configuration/cloudflare-access/
