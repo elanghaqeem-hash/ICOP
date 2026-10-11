@@ -7,9 +7,11 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+# Long API OCR/PDF jobs must not be killed by unrelated commits to the PR.
+# Per-commit grouping keeps each run reproducible; no production deploy occurs.
 concurrency:
-  group: icop-ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: icop-ci-${{ github.workflow }}-${{ github.ref }}-${{ github.sha }}
+  cancel-in-progress: false
 jobs:
   api-checks:
     name: API typecheck and tests
