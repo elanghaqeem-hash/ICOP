@@ -36,6 +36,8 @@ jobs:
         run: npm run build:cloudflare
       - name: Validate Cloudflare Worker without public deployment
         run: npx wrangler deploy --dry-run
+      - name: Validate separate Cloudflare backend binding configuration without deploying
+        run: npx wrangler deploy --config wrangler.develop.jsonc --dry-run
       - name: Smoke real local Worker login and readiness routes
         shell: bash
         run: |
