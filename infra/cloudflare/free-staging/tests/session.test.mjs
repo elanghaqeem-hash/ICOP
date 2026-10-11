@@ -48,6 +48,13 @@ test('MFA and first-login gates precede permissions; approval SoD enforced',asyn
   assert.equal((await opts({...baseRow,force_password_change:1})).code,'PASSWORD_CHANGE_REQUIRED');
   assert.equal((await opts({...baseRow,role:'super_admin'},'tenant-a','approval.decide')).code,'PERMISSION_DENIED');
 });
+test('stale MFA-verified session denied if account MFA enrollment has been removed',async()=>{
+  const contradiction={...baseRow,mfa_enabled:0,mfa_verified:1};
+  const result=await opts(contradiction);
+  assert.equal(result.ok,false);
+  assert.equal(result.code,'MFA_REQUIRED');
+});
+
 test('DB exceptions, malformed tokens, invalid key fail closed',async()=>{
   const db={prepare:()=>{throw Error('db is offline')}};
   assert.equal((await verifySession(db,credential,key,'tenant-a','user.manage',now)).code,'SESSION_DB_UNAVAILABLE');
