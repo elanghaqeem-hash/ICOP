@@ -21,6 +21,15 @@ test('cross-tenant, inactive and first-login user denied before permission evalu
   assert.equal(authorizationGate({actor:{...ready(),forcePasswordChange:true},resourceTenantId:'tenant-a',permission:'user.manage'}),'PASSWORD_CHANGE_REQUIRED');
   assert.equal(authorizationGate({actor:{...ready(),mfaVerified:false},resourceTenantId:'tenant-a',permission:'user.manage'}),'MFA_REQUIRED');
 });
+test('privileged and stale sessions without enrolled MFA fail closed',()=>{
+  const missingEnrollment = {...ready('super_admin'),mfaEnabled:false,mfaVerified:true};
+  assert.equal(authorizationGate({actor:missingEnrollment,resourceTenantId:'tenant-a',permission:'user.manage'}),'MFA_REQUIRED');
+  const missingBoth = {...ready('director'),mfaEnabled:false,mfaVerified:false};
+  assert.equal(authorizationGate({actor:missingBoth,resourceTenantId:'tenant-a',permission:'approval.decide'}),'MFA_REQUIRED');
+  const inconsistentCustomer = {...ready('customer_user'),mfaEnabled:false,mfaVerified:true};
+  assert.equal(authorizationGate({actor:inconsistentCustomer,resourceTenantId:'tenant-a',permission:'portal.access'}),'MFA_REQUIRED');
+});
+
 test('deny-by-default scope and SoD: superadmin cannot decide pricing approval',()=>{
   assert.equal(authorizationGate({actor:ready('super_admin'),resourceTenantId:'tenant-a',permission:'approval.decide'}),'PERMISSION_DENIED');
   assert.equal(authorizationGate({actor:ready('company_admin'),resourceTenantId:'tenant-a',permission:'user.manage'}),'ALLOW');
