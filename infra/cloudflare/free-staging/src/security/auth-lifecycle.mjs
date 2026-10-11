@@ -7,7 +7,7 @@ import { newSessionToken, hashSessionToken } from './session.mjs';
 import { matchTotp } from './totp.mjs';
 import { decryptTotpSecret } from './credentials.mjs';
 import { planMfaReset } from './mfa-reset-policy.mjs';
-import { createRecoveryCodes } from './recovery-codes.mjs';
+import { createRecoveryCodes, hashRecoveryCode } from './recovery-codes.mjs';
 
 const idRe=/^[A-Za-z0-9_-]{2,128}$/;
 const keyRe=/^[a-f0-9]{64}$/i;
@@ -128,4 +128,46 @@ export async function resetUserMfa({db,actor,targetId,reason,ip,auditKey,
        Number(x[3].meta?.changes)!==1)return deny('AUTH_DB_UNAVAILABLE');
   }catch{return deny('AUTH_DB_UNAVAILABLE');}
   return {ok:true,sessionsRevoked:true,reenrollmentRequired:true};
+}
+
+
+/** UAT U01: conditional one-time recovery consumption.
+ * A wrong/reused/expired code never causes a token to be returned.
+ * A verified, tenant-scoped first-factor subject MUST be supplied by a
+ * trusted server handler, never from a browser-provided user identifier.
+ */
+export async function consumeRecoveryAndIssueSession({db,tenantId,userId,code,
+  recoveryKey,keys,ip,now=Math.floor(Date.now()/1000)}) {
+  if(!db?.prepare||!db?.batch||!subject(tenantId,userId)||
+     !Number.isSafeInteger(now)||now<=0)return deny('AUTH_INVALID');
+  if(!keys?.session||!keys?.audit)return deny('AUTH_KEYS_NOT_CONFIGURED');
+  const ipHash=await networkDigest(ip,keys.audit);
+  if(!ipHash)return deny('AUTH_AUDIT_NOT_CONFIGURED');
+  let hashedCode;
+  try {
+    hashedCode=await hashRecoveryCode({secret:recoveryKey,tenantId,userId,code});
+  }catch{return deny('MFA_RECOVERY_INVALID');}
+  let user;
+  try {
+    user=await stmt(db,'SELECT token_version,is_active,mfa_enabled,force_password_change FROM users WHERE tenant_id=? AND id=? LIMIT 1',tenantId,userId).first();
+  }catch{return deny('AUTH_DB_UNAVAILABLE');}
+  if(user?.is_active!==1||user?.mfa_enabled!==1||
+     user?.force_password_change!==0||
+     !Number.isSafeInteger(Number(user?.token_version)))
+    return deny('AUTH_NOT_ALLOWED');
+  const token=newSessionToken();
+  const digest=await hashSessionToken(token,keys.session);
+  if(!digest)return deny('AUTH_KEYS_NOT_CONFIGURED');
+  try {
+    const x=await db.batch([
+      stmt(db,'UPDATE mfa_recovery_codes SET consumed_at=? WHERE tenant_id=? AND user_id=? AND code_hash=? AND consumed_at IS NULL AND revoked_at IS NULL AND issued_at<=? AND expires_at>=?',now,tenantId,userId,hashedCode,now,now),
+      stmt(db,'INSERT INTO auth_sessions(session_id_hash,tenant_id,user_id,token_version,mfa_verified,issued_at,expires_at) VALUES(?,?,?,?,1,?,?)',digest,tenantId,userId,Number(user.token_version),now,now+28800),
+      stmt(db,"INSERT INTO audit_events(tenant_id,actor_id,action,entity_type,entity_id,ip) VALUES(?,?,'auth.mfa_recovery_used','user',?,?)",tenantId,userId,userId,ipHash)
+    ]);
+    // D1 UPDATE has to change exactly one row. A replay can never return a
+    // bearer token, even when later statements completed in the same batch.
+    if(!goodBatch(x,3)||x.some(y=>Number(y.meta?.changes)!==1))
+      return deny('MFA_RECOVERY_INVALID');
+  }catch{return deny('MFA_RECOVERY_INVALID');}
+  return {ok:true,sessionToken:token,expiresAt:now+28800};
 }
