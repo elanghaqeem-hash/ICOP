@@ -67,6 +67,20 @@ an Access bypass or disable the application merely to make CI pass.
    recovery/revocation, session issuance and tenant-level authorization UAT,
    plus sign-off. Leave business endpoints disabled before these pass.
 
+## Internal Worker-to-Worker access gate
+
+Cloudflare Access is an **edge admission control**, not a substitute for
+application authorization. A future `icop-staging` frontend can call the
+API through an internal Service Binding, rather than the public
+`workers.dev` URL. Therefore every business handler must verify the
+authoritative app session, tenant, MFA and role independently of which
+transport invokes the Worker. Do not interpret an internal binding, a
+request header, or the mere presence of `ctx.access` as an ICOP Superadmin
+authorization. The API currently returns 503 to unported business routes.
+
+Service Binding docs:
+https://developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings/
+
 ## References
 
 - Cloudflare Workers Access: https://developers.cloudflare.com/workers/configuration/cloudflare-access/
