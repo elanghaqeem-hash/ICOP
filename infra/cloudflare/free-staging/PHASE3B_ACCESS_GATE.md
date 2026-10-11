@@ -81,6 +81,25 @@ authorization. The API currently returns 503 to unported business routes.
 Service Binding docs:
 https://developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings/
 
+## Follow-up verification — MFA activation hold
+
+- Connected Cloudflare API still reports **no `require` selectors** in the
+  `Cloudflare account members` Access policy. This does **not** prove
+  independent MFA is absent; it means an enforced MFA challenge has **not yet
+  been verified**, and the security release gate remains blocked.
+- The API helper now requires two independently controlled staging flags:
+  `ACCESS_IDENTITY_ENABLED=true` and `ACCESS_MFA_CONFIRMED=true`, plus the
+  valid `ACCESS_AUD`. Both flags remain `false` in the actual staging
+  configuration. A flag is NOT evidence that MFA is really enforced: operators
+  must first check the Cloudflare application settings and complete an
+  interactive MFA challenge with an authorized test identity.
+- New negative tests assert that enabled Access alone with a missing/false
+  MFA flag never queries identity memberships and never creates audit records.
+- No account / tenant `DEIT` / Superadmin credentials were provisioned,
+  and production Worker bindings remain unchanged.
+- Do not configure global Zero Trust MFA settings or replace the existing
+  Access allow policy without an operator-reviewed lockout and rollback plan.
+
 ## References
 
 - Cloudflare Workers Access: https://developers.cloudflare.com/workers/configuration/cloudflare-access/
