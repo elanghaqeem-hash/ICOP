@@ -9,3 +9,5 @@ coverage/
 .DS_Store
 storage/
 *.tsbuildinfo
+infra/staging/.env.api
+infra/staging/.env.tunnel
