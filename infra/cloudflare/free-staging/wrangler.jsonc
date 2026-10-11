@@ -13,6 +13,7 @@
   ],
   "vars": {
     "ACCESS_AUD": "de8e1d54820b7a0c1ddbfc808f589e14ba04555256df734a0bea328476e0c904",
-    "ACCESS_IDENTITY_ENABLED": "false"
+    "ACCESS_IDENTITY_ENABLED": "false",
+    "ACCESS_MFA_CONFIRMED": "false"
   }
 }
