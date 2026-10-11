@@ -26,7 +26,7 @@ export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [backend, setBackend] = useState<'checking' | 'configured' | 'not-configured' | 'unknown'>('checking');
+  const [backend, setBackend] = useState<'checking' | 'configured' | 'not-configured' | 'staging-connected' | 'unknown'>('checking');
   const [isCloudflareDev, setIsCloudflareDev] = useState(false);
   const [statusAttempt, setStatusAttempt] = useState(0);
   const canSignIn = backend === 'configured';
@@ -40,12 +40,13 @@ export default function LoginPage() {
     })
       .then(async (res) => {
         if (!res.ok) throw new Error('Backend readiness unavailable');
-        return res.json() as Promise<{ backend?: string }>;
+        return res.json() as Promise<{ backend?: string; stagingConnection?: string }>;
       })
       .then((status) => {
         if (!active) return;
         setBackend(status.backend === 'CONFIGURED_UNVERIFIED'
           ? 'configured'
+          : status.stagingConnection === 'CONNECTED_BOOTSTRAP_ONLY' ? 'staging-connected'
           : status.backend === 'NOT_CONFIGURED' ? 'not-configured' : 'unknown');
       })
       .catch(() => { if (active) setBackend('unknown'); });
@@ -107,6 +108,9 @@ export default function LoginPage() {
               {backend === 'not-configured' && (
                 <span>Login belum tersedia. Backend ICOP development belum terhubung. Jangan masukkan kredensial perusahaan di lingkungan ini.</span>
               )}
+              {backend === 'staging-connected' && (
+                <span>Backend staging Cloudflare dan database telah terhubung. Login pengguna belum aktif karena autentikasi, MFA, dan akun uji masih menunggu validasi. Jangan gunakan kata sandi asli di sini.</span>
+              )}
               {backend === 'configured' && (
                 <span>Koneksi backend sudah dikonfigurasi, tetapi belum dinyatakan lolos UAT. Gunakan hanya akun pengujian yang diizinkan.</span>
               )}
@@ -164,8 +168,10 @@ export default function LoginPage() {
               </div>
             </div>
 
-            <button className="auth-submit" type="submit" disabled={busy || !canSignIn} aria-busy={busy || backend === 'checking'}>
-              <span>{busy ? 'Sedang masuk…' : backend === 'checking' ? 'Memeriksa layanan…' : !canSignIn ? 'Login belum tersedia' : 'Masuk ke ICOP'}</span>
+            <button className="auth-submit" type={canSignIn ? 'submit' : 'button'}
+              onClick={canSignIn ? undefined : () => { setBackend('checking'); setStatusAttempt((v) => v + 1); }}
+              disabled={busy || backend === 'checking'} aria-busy={busy || backend === 'checking'}>
+              <span>{busy ? 'Sedang masuk…' : backend === 'checking' ? 'Memeriksa layanan…' : !canSignIn ? 'Periksa kesiapan login' : 'Masuk ke ICOP'}</span>
               {!busy && (
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                   <path d="M5 12h14m-6-6l6 6-6 6" />
