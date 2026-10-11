@@ -1,0 +1,14 @@
+{
+  "name": "icop-staging-api",
+  "main": "src/worker.mjs",
+  "compatibility_date": "2026-10-11",
+  "workers_dev": true,
+  "preview_urls": false,
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "icop-staging-db",
+      "database_id": "8a454b5e-597a-49fd-a51e-1730786de740"
+    }
+  ]
+}
