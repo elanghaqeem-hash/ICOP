@@ -53,7 +53,7 @@ jobs:
           curl --fail --silent --show-error --retry 5 --retry-delay 3 --max-time 15 "$ROOT/health" -o /tmp/icop-health.json
           node -e 'const d=require("/tmp/icop-health.json");if(d.status!=="ok"||d.database!=="ready"||d.environment!=="staging")process.exit(1);console.log("PASS: live Cloudflare D1 health")'
           curl --fail --silent --show-error --retry 5 --retry-delay 3 --max-time 15 "$ROOT/api/v1/system/readiness" -o /tmp/icop-readiness.json
-          node -e 'const d=require("/tmp/icop-readiness.json");if(d.status!=="bootstrap_only"||Object.values(d.capabilities).some(Boolean)||d.schema?.identity_audit_prepared!==true)process.exit(1);console.log("PASS: live D1 identity/audit schema ready, all functional modules still disabled")'
+          node -e 'const d=require("/tmp/icop-readiness.json");if(d.status!=="bootstrap_only"||Object.values(d.capabilities).some(Boolean)||d.schema?.identity_audit_prepared!==true||d.schema?.auth_security_prepared!==true)process.exit(1);console.log("PASS: live D1 identity/audit schema ready, all functional modules still disabled")'
           code="$(curl --silent --show-error --max-time 15 -o /tmp/icop-auth.json -w '%{http_code}' \
             -X POST "$ROOT/api/v1/auth/login" \
             -H "Content-Type: application/json" \
