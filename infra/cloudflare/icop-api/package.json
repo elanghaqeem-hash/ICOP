@@ -1,0 +1,17 @@
+{
+  "name": "@icop/cloudflare-api-gateway",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy --config wrangler.jsonc",
+    "dev": "wrangler dev --config wrangler.jsonc",
+    "types": "wrangler types --config wrangler.jsonc"
+  },
+  "dependencies": {
+    "@cloudflare/containers": "0.3.7"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "wrangler": "4.149.0"
+  }
+}
