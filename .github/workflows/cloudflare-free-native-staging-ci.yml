@@ -36,6 +36,7 @@ jobs:
           assert.equal(api.d1_databases[0].database_name, 'icop-staging-db');
           assert.match(api.vars.ACCESS_AUD, /^[a-f0-9]{64}$/);
           assert.equal(api.vars.ACCESS_IDENTITY_ENABLED, 'false', 'No auth activation until MFA and UAT gates');
+          assert.equal(api.vars.ACCESS_MFA_CONFIRMED, 'false', 'MFA cannot be claimed before Cloudflare Access challenge is verified');
           assert.ok(!('ACCESS_AUDIT_HMAC_KEY' in api.vars), 'audit signing key must never be a committed variable');
           assert.equal(web.name, 'icop-staging');
           assert.ok(web.services.some(x => x.binding === 'ICOP_API' && x.service === 'icop-staging-api'));
