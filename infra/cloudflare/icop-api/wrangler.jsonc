@@ -3,22 +3,39 @@
   "name": "icop-api",
   "main": "src/index.ts",
   "compatibility_date": "2026-10-10",
-  "compatibility_flags": ["nodejs_compat"],
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
   "workers_dev": false,
   "preview_urls": false,
   "containers": [
     {
       "class_name": "IcopApiContainer",
       "image": "../../../apps/api/Dockerfile",
-      "max_instances": 1
+      "max_instances": 1,
+      "instance_type": "standard-1"
     }
   ],
   "durable_objects": {
     "bindings": [
-      { "name": "ICOP_CONTAINER", "class_name": "IcopApiContainer" }
+      {
+        "name": "ICOP_CONTAINER",
+        "class_name": "IcopApiContainer"
+      }
     ]
   },
   "migrations": [
-    { "tag": "icop_api_container_v1", "new_sqlite_classes": ["IcopApiContainer"] }
-  ]
+    {
+      "tag": "icop_api_container_v1",
+      "new_sqlite_classes": [
+        "IcopApiContainer"
+      ]
+    }
+  ],
+  "exports": {
+    "IcopApiContainer": {
+      "type": "durable-object",
+      "storage": "sqlite"
+    }
+  }
 }
