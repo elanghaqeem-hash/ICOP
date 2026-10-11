@@ -83,9 +83,12 @@ export async function issueRecoveryAfterMfa({db,tenantId,userId,key,ip,auditKey,
   try {
     const u=await stmt(db,'SELECT is_active,mfa_enabled FROM users WHERE tenant_id=? AND id=? LIMIT 1',tenantId,userId).first();
     if(u?.is_active!==1||u?.mfa_enabled!==1)return deny('AUTH_NOT_ALLOWED');
+    const max=await stmt(db,'SELECT COALESCE(MAX(generation),0) AS maximum FROM mfa_recovery_codes WHERE tenant_id=? AND user_id=?',tenantId,userId).first();
+    const generation=Number(max?.maximum)+1;
+    if(!Number.isSafeInteger(generation)||generation<1)return deny('AUTH_DB_UNAVAILABLE');
     const commands=[
       stmt(db,'UPDATE mfa_recovery_codes SET revoked_at=? WHERE tenant_id=? AND user_id=? AND consumed_at IS NULL AND revoked_at IS NULL',now,tenantId,userId),
-      ...hashes.map(h=>stmt(db,'INSERT INTO mfa_recovery_codes(tenant_id,user_id,code_hash,generation,issued_at,expires_at) VALUES(?,?,?,(SELECT COALESCE(MAX(generation),0)+1 FROM mfa_recovery_codes WHERE tenant_id=? AND user_id=?),?,?)',tenantId,userId,h,tenantId,userId,now,now+90*86400)),
+      ...hashes.map(h=>stmt(db,'INSERT INTO mfa_recovery_codes(tenant_id,user_id,code_hash,generation,issued_at,expires_at) VALUES(?,?,?,?,?,?)',tenantId,userId,h,generation,now,now+90*86400)),
       stmt(db,"INSERT INTO audit_events(tenant_id,actor_id,action,entity_type,entity_id,ip) VALUES(?,?,'auth.mfa_recovery_issued','user',?,?)",tenantId,userId,userId,ipHash),
     ];
     const result=await db.batch(commands);
