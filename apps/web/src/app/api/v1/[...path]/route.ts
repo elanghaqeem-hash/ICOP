@@ -1,6 +1,5 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
-import { getCloudflareContext } from '@opennextjs/cloudflare';
 
 // Browser tokens never pass through client JavaScript. Only this same-origin
 // Next.js BFF reads the httpOnly session cookie and injects bearer auth upstream.
@@ -14,20 +13,6 @@ const MAX_AGE = 8 * 60 * 60;
 // Production must never silently proxy credentials to loopback when the API is missing.
 const API_ORIGIN = process.env.API_INTERNAL_URL?.trim() || (production ? null : 'http://localhost:3001');
 
-// Cloudflare deployment prefers a private Service Binding to the new icop-api
-// Worker (no publicly addressable backend URL). For local/other hosts we retain
-// the existing explicit API_INTERNAL_URL behavior. Never read this at module load.
-function privateApiService(): { fetch(request: Request): Promise<Response> } | null {
-  try {
-    const env = getCloudflareContext().env as unknown as {
-      ICOP_API?: { fetch(request: Request): Promise<Response> };
-    };
-    return env.ICOP_API ?? null;
-  } catch {
-    // Next.js development outside Cloudflare does not have a Workers context.
-    return null;
-  }
-}
 type Context = { params: Promise<{ path: string[] }> };
 const methodsWithoutBody = new Set(['GET', 'HEAD']);
 
@@ -94,12 +79,22 @@ async function proxy(request: NextRequest, context: Context): Promise<NextRespon
   const token = request.cookies.get(SESSION)?.value;
   if (!token && !login && !webhook) return error(401, 'UNAUTHENTICATED');
 
-  const privateApi = privateApiService();
-  if (!privateApi && !API_ORIGIN) return error(503, 'API_NOT_CONFIGURED');
+  // Workers Free talks to a VPS API over HTTPS, protected by Cloudflare Access.
+  // All credentials stay server-side; browsers only contact this same-origin BFF.
+  if (!API_ORIGIN) return error(503, 'API_NOT_CONFIGURED');
   let url: URL;
-  try { url = new URL(API_ORIGIN ?? 'https://icop-api.internal'); }
+  try { url = new URL(API_ORIGIN); }
   catch { return error(503, 'API_ORIGIN_INVALID'); }
   if (!['https:', 'http:'].includes(url.protocol)) return error(503, 'API_ORIGIN_INVALID');
+  // Production must not send credentials to a remote HTTP endpoint.
+  // localhost and the Docker Compose service named api are allowed for CI.
+  const local = ['localhost', '127.0.0.1', '[::1]', 'api'].includes(url.hostname);
+  if (production && url.protocol !== 'https:' && !local) return error(503, 'API_ORIGIN_INVALID');
+  const accessId = process.env.CF_ACCESS_CLIENT_ID?.trim();
+  const accessSecret = process.env.CF_ACCESS_CLIENT_SECRET?.trim();
+  const accessRequired = process.env.API_ACCESS_REQUIRED === 'true';
+  if ((accessRequired && (!accessId || !accessSecret)) ||
+      Boolean(accessId) !== Boolean(accessSecret)) return error(503, 'API_NOT_CONFIGURED');
   url.pathname = '/api/v1/' + path.map(encodeURIComponent).join('/');
   url.search = request.nextUrl.search;
   const headers = new Headers();
@@ -108,6 +103,12 @@ async function proxy(request: NextRequest, context: Context): Promise<NextRespon
     if (value) headers.set(name, value);
   }
   if (token && !login && !webhook) headers.set('authorization', 'Bearer ' + token);
+  // Do not accept CF-Access-* headers from the browser. Forward secrets only
+  // from trusted BFF runtime variables, for the configured API origin.
+  if (accessId && accessSecret) {
+    headers.set('CF-Access-Client-Id', accessId);
+    headers.set('CF-Access-Client-Secret', accessSecret);
+  }
 
   let upstream: Response;
   try {
@@ -118,7 +119,7 @@ async function proxy(request: NextRequest, context: Context): Promise<NextRespon
       init.body = request.body;
       init.duplex = 'half';
     }
-    upstream = privateApi ? await privateApi.fetch(new Request(url, init)) : await fetch(url, init);
+    upstream = await fetch(url, init);
   } catch {
     return error(502, 'API_UNAVAILABLE');
   }
