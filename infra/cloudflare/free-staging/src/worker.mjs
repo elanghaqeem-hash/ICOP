@@ -29,6 +29,20 @@ async function checkDatabase(env) {
   }
 }
 
+// Schema presence is NOT proof of a usable authentication or RBAC service.
+// Never enable login just because users/audit tables were created.
+async function identitySchemaPrepared(env) {
+  if (!env.DB || typeof env.DB.prepare !== 'function') return false;
+  try {
+    const row = await env.DB.prepare(
+      'SELECT version FROM migration_history WHERE version = ? LIMIT 1',
+    ).bind('0002_cf_free_identity_audit_schema').first();
+    return row?.version === '0002_cf_free_identity_audit_schema';
+  } catch {
+    return false;
+  }
+}
+
 const UNAVAILABLE = { code: 'MODULE_NOT_MIGRATED', message: 'Cloudflare staging: this module is not yet available.' };
 
 export default {
@@ -44,6 +58,7 @@ export default {
         status: 'bootstrap_only',
         environment: 'staging',
         database: 'ready',
+        schema: { identity_audit_prepared: await identitySchemaPrepared(env) },
         capabilities: {
           authentication: false,
           mfa: false,
