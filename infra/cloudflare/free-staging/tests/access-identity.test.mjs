@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import worker from '../src/worker.mjs';
 
 const ORIGIN = 'https://icop-staging-api.example.invalid';
-const FLAGS = { ACCESS_IDENTITY_ENABLED: 'true', ACCESS_AUD: 'staging-access-app', ACCESS_AUDIT_HMAC_KEY: '1a'.repeat(32) };
+const FLAGS = { ACCESS_IDENTITY_ENABLED: 'true', ACCESS_MFA_CONFIRMED: 'true', ACCESS_AUD: 'staging-access-app', ACCESS_AUDIT_HMAC_KEY: '1a'.repeat(32) };
 const PROFILE = {
   id: 'synthetic-1', tenant_id: 'tenant-deit', email_normalized: 'test@example.invalid',
   full_name: 'Synthetic Identity', code: 'DEIT', role: 'auditor',
@@ -52,6 +52,18 @@ test('disabled by default even when a synthetic identity and D1 user are supplie
   assert.equal(r.status,503);
   assert.equal(r.data.code,'STAGING_ACCESS_NOT_CONFIGURED');
 });
+test('Access membership alone cannot activate identity lookup without confirmed MFA gate',async()=>{
+  const {DB,calls}=fakeDb();
+  for (const flag of [undefined, 'false', 'TRUE']) {
+    const env={...FLAGS,ACCESS_MFA_CONFIRMED:flag,DB};
+    const r=await api(request('DEIT',{'cf-connecting-ip':'192.0.2.44'}),env,access());
+    assert.equal(r.status,503);
+    assert.equal(r.data.code,'STAGING_MFA_GATE_PENDING');
+  }
+  assert.equal(calls.some(x=>x.sql.includes('FROM users u')),false);
+  assert.equal(calls.some(x=>x.sql.includes('INSERT INTO audit_events')),false);
+});
+
 test('raw JWT, email and role headers cannot substitute native ctx.access',async()=>{
   const {DB}=fakeDb();
   const r=await api(request('DEIT',{
