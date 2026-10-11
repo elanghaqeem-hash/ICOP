@@ -1,6 +1,5 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  // STAGING-ONLY Worker. Do not rename to production 'icop'.
   "name": "icop-staging",
   "main": ".open-next/worker.js",
   "compatibility_date": "2026-10-10",
