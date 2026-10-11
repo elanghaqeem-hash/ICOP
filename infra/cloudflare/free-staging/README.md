@@ -144,3 +144,13 @@ Policy source: `apps/api/src/lib/rbac.ts`,
 `apps/api/src/modules/auth/policy.ts`, uploaded `19-UAT-Pack.md`.
 Cloudflare native identity reference:
 https://developers.cloudflare.com/workers/configuration/cloudflare-access/
+
+## Phase 3A — auth security schema (staging only)
+
+- Live isolated D1 `icop-staging-db` migration `0003_cf_free_auth_security_foundation` applied successfully. Three migration versions are present.
+- Added `auth_attempt_buckets`, `auth_sessions`, `mfa_used_steps` and MFA lockout/expiry columns to `users`.
+- Verified all new tables exist with **zero** tenant, user, session, MFA replay or audit records; no dummy accounts or credentials are provisioned.
+- A fail-closed, source-derived restricted RBAC/MFA policy and synthetic security tests cover cross-tenant denial, forced password change, privileged MFA, per-tenant actor FK, session expiry, TOTP replay and approval SoD.
+- The staging Worker `/api/v1/system/readiness` now reports `schema.auth_security_prepared`. Authentication and MFA capabilities remain `false` and `POST /api/v1/auth/login` remains 503.
+- Worker deployment requires a **multi-module upload** including `worker.mjs` and `access-identity.mjs` or standard Wrangler deploy; uploading the main module alone fails because it imports the Access module.
+- This is a **database/policy/test milestone only**. It does not establish secure runtime password hashing, real auth session issue/revocation, MFA enrollment/verification, or end-to-end login/UAT readiness. Never promote to `icop` production at this stage.
