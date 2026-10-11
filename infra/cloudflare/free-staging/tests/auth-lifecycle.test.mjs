@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { webcrypto } from 'node:crypto';
 import { encryptTotpSecret, newTotpSecret } from '../src/security/credentials.mjs';
 import { totpAt } from '../src/security/totp.mjs';
-import { finishTotpAndIssueSession, issueRecoveryAfterMfa, resetUserMfa } from '../src/security/auth-lifecycle.mjs';
+import { finishTotpAndIssueSession, issueRecoveryAfterMfa, consumeRecoveryAndIssueSession, resetUserMfa } from '../src/security/auth-lifecycle.mjs';
 
 if(!globalThis.crypto)globalThis.crypto=webcrypto;
 const now=1800000000;
@@ -126,4 +126,32 @@ test('U02/U24: MFA reset revokes all sessions, revokes codes and audits reason',
   const unauthorized=await resetUserMfa({db:fakeDb({target}),actor:{...actor,role:'customer_user'},
     targetId:target.id,reason:'Confirmed lost device by authorized admin',ip,auditKey,now});
   assert.equal(unauthorized.code,'PERMISSION_DENIED');
+});
+
+
+test('U01: recovery code consumed once and code replay cannot release a session token',async()=>{
+  const account={is_active:1,mfa_enabled:1,force_password_change:0,token_version:3};
+  const code='AABBCCDD-00112233-44556677-8899AABB';
+  const good=fakeDb({user:account});
+  const allowed=await consumeRecoveryAndIssueSession({
+    db:good,tenantId,userId,code,recoveryKey,keys,ip,now});
+  assert.equal(allowed.ok,true);
+  assert.match(allowed.sessionToken,/^s1_[a-f0-9]{64}$/);
+  assert.deepEqual(good.calls.find(x=>'batchSize'in x),{batchSize:3});
+  const stored=JSON.stringify(good.calls);
+  assert.ok(!stored.includes(code),'raw recovery code must not be persisted');
+  assert.ok(!stored.includes(allowed.sessionToken),'raw session token must never be stored');
+  const replay=await consumeRecoveryAndIssueSession({
+    db:fakeDb({user:account,changesOverride:{0:0}}),tenantId,userId,code,
+    recoveryKey,keys,ip,now});
+  assert.equal(replay.ok,false);
+  assert.equal('sessionToken' in replay,false);
+  const bad=await consumeRecoveryAndIssueSession({
+    db:fakeDb({user:account}),tenantId,userId,code:'bad-recovery',
+    recoveryKey,keys,ip,now});
+  assert.equal(bad.ok,false);
+  const missingSchema=await consumeRecoveryAndIssueSession({
+    db:fakeDb({user:account,batchFail:true}),tenantId,userId,code,
+    recoveryKey,keys,ip,now});
+  assert.equal(missingSchema.ok,false);
 });
