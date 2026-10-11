@@ -83,11 +83,12 @@ try {
   const cookie = fromCookies(login);
   const csrf = extract(cookie, '__Host-icop-csrf');
   const me = await send('/api/v1/auth/me', 'GET', { cookie });
-  assert.equal((await me.json()).id, user.id);
+  const meData = await me.json();
+  assert.equal(meData.id, user.id);
   assert.equal(calls.at(-1).headers.authorization, 'Bearer server-only-jwt');
   assert.equal(calls.at(-1).headers['cf-access-client-id'], 'ci-access-client');
   assert.equal(calls.at(-1).headers['cf-access-client-secret'], 'ci-access-secret-not-production');
-  assert.ok(!JSON.stringify(await me.clone().text()).includes('ci-access-secret'), 'Access secret leaked in response');
+  assert.ok(!JSON.stringify(meData).includes('ci-access-secret'), 'Access secret leaked in response');
 
   const missing = await send('/api/v1/test-resource', 'POST', { cookie, body: '{}' });
   assert.equal(missing.status, 403);
