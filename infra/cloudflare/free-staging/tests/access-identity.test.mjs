@@ -160,3 +160,59 @@ test('empty or malformed audit result cannot authorize identity',async()=>{
   assert.equal(r.status,503);
   assert.equal(r.data.code,'STAGING_AUDIT_UNAVAILABLE');
 });
+
+
+test('DEIT controlled gate: live-safe flags reject synthetic verified member before D1 lookup',async()=>{
+  const {DB,calls}=fakeDb();
+  const r=await api(request('DEIT',{'cf-connecting-ip':'192.0.2.44'}),{
+    ...FLAGS,ACCESS_IDENTITY_ENABLED:'false',ACCESS_MFA_CONFIRMED:'false',DB,
+  },access());
+  assert.equal(r.status,503);
+  assert.equal(r.data.code,'STAGING_ACCESS_NOT_CONFIGURED');
+  assert.ok(!calls.some(x=>x.sql.includes('FROM users u')));
+  assert.ok(!calls.some(x=>x.sql.includes('INSERT INTO audit_events')));
+});
+
+test('DEIT controlled identity: membership is tenant+email scoped and yields no app session',async()=>{
+  const {DB,calls}=fakeDb();
+  const r=await api(request('DEIT',{'cf-connecting-ip':'192.0.2.44'}),
+    {...FLAGS,DB},access(' TEST@EXAMPLE.INVALID '));
+  assert.equal(r.status,202);
+  const lookup=calls.find(x=>x.sql.includes('FROM users u'));
+  assert.deepEqual(lookup.params,['DEIT','test@example.invalid']);
+  assert.equal(r.data.tenant.code,'DEIT');
+  assert.equal(r.data.applicationAuthenticated,false);
+  assert.equal(r.data.mfaVerified,false);
+  assert.deepEqual(r.data.permissions,[]);
+  for(const forbidden of ['token','session','role','userId','full_name','password_hash']){
+    assert.ok(!(forbidden in r.data),forbidden+' must not be released before ICOP login');
+  }
+});
+
+test('DEIT controlled identity: forged role/email headers cannot override Cloudflare verified email',async()=>{
+  const {DB,calls}=fakeDb();
+  const r=await api(request('DEIT',{
+    'cf-connecting-ip':'192.0.2.44',
+    'x-user-email':'test@example.invalid','x-user-role':'super_admin',
+  }),{...FLAGS,DB},access('intruder@example.invalid'));
+  assert.equal(r.status,403);
+  assert.equal(r.data.code,'ACCESS_MEMBERSHIP_DENIED');
+  assert.deepEqual(calls.find(x=>x.sql.includes('FROM users u')).params,
+    ['DEIT','intruder@example.invalid']);
+  assert.ok(!calls.some(x=>x.sql.includes('INSERT INTO audit_events')));
+});
+
+test('DEIT controlled identity: cross-tenant and inactive membership never create audit',async()=>{
+  for(const {tenant,user} of [
+    {tenant:'OTHER',user:PROFILE},
+    {tenant:'DEIT',user:{...PROFILE,is_active:0}},
+    {tenant:'DEIT',user:{...PROFILE,role:'undefined-role'}},
+  ]){
+    const {DB,calls}=fakeDb({user});
+    const r=await api(request(tenant,{'cf-connecting-ip':'192.0.2.44'}),
+      {...FLAGS,DB},access());
+    assert.equal(r.status,403);
+    assert.equal(r.data.code,'ACCESS_MEMBERSHIP_DENIED');
+    assert.ok(!calls.some(x=>x.sql.includes('INSERT INTO audit_events')));
+  }
+});
