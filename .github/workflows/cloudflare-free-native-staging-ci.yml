@@ -38,3 +38,24 @@ jobs:
           assert.ok(!('containers' in api));
           console.log('PASS: Cloudflare Free staging isolated from production');
           JS
+
+  live-cloudflare-health:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Verify staging D1 health over public HTTPS
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="https://icop-staging-api.elang-haqeem.workers.dev"
+          curl --fail --silent --show-error --retry 5 --retry-delay 3 --max-time 15 "$ROOT/health" -o /tmp/icop-health.json
+          node -e 'const d=require("/tmp/icop-health.json");if(d.status!=="ok"||d.database!=="ready"||d.environment!=="staging")process.exit(1);console.log("PASS: live Cloudflare D1 health")'
+          curl --fail --silent --show-error --retry 5 --retry-delay 3 --max-time 15 "$ROOT/api/v1/system/readiness" -o /tmp/icop-readiness.json
+          node -e 'const d=require("/tmp/icop-readiness.json");if(d.status!=="bootstrap_only"||Object.values(d.capabilities).some(Boolean))process.exit(1);console.log("PASS: live ICOP staging capabilities fail closed")'
+          code="$(curl --silent --show-error --max-time 15 -o /tmp/icop-auth.json -w '%{http_code}' \
+            -X POST "$ROOT/api/v1/auth/login" \
+            -H "Content-Type: application/json" \
+            --data '{"tenant":"nonexistent"}')"
+          test "$code" = 503
+          node -e 'const d=require("/tmp/icop-auth.json");if(d.code!=="STAGING_AUTH_NOT_READY")process.exit(1);console.log("PASS: live auth correctly disabled")'
+          rm -f /tmp/icop-health.json /tmp/icop-readiness.json /tmp/icop-auth.json
