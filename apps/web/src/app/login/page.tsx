@@ -133,7 +133,7 @@ export default function LoginPage() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
-                disabled={busy || !canSignIn}
+                disabled={busy}
               />
             </div>
 
@@ -148,7 +148,7 @@ export default function LoginPage() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
-                  disabled={busy || !canSignIn}
+                  disabled={busy}
                 />
                 <button
                   type="button"
@@ -156,7 +156,7 @@ export default function LoginPage() {
                   onClick={() => setShowPassword((current) => !current)}
                   aria-label={showPassword ? 'Sembunyikan kata sandi' : 'Lihat kata sandi'}
                   aria-pressed={showPassword}
-                  disabled={busy || !canSignIn}
+                  disabled={busy}
                   aria-controls="icop-login-password"
                 >
                   <PasswordVisibilityIcon visible={showPassword} />
