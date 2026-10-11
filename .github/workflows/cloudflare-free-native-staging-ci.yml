@@ -1,0 +1,58 @@
+name: ICOP Cloudflare Free Native Staging API (no deploy)
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'infra/cloudflare/free-staging/**'
+      - 'apps/web/wrangler.staging.jsonc'
+      - 'apps/web/src/app/api/v1/**'
+      - '.github/workflows/cloudflare-free-native-staging-ci.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  api-bootstrap-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Run Cloudflare-native staging API security tests
+        run: node --test infra/cloudflare/free-staging/tests/*.test.mjs
+      - name: Validate identity/tenant/audit schema with in-memory SQLite
+        run: python3 -m unittest discover -s infra/cloudflare/free-staging/tests -p 'test_*.py' -v
+      - name: Confirm isolated Worker/D1 wiring and no production changes
+        run: |
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          import assert from 'node:assert/strict';
+          const api = JSON.parse(fs.readFileSync('infra/cloudflare/free-staging/wrangler.jsonc', 'utf8'));
+          const web = JSON.parse(fs.readFileSync('apps/web/wrangler.staging.jsonc', 'utf8'));
+          const main = fs.readFileSync('apps/web/wrangler.jsonc', 'utf8');
+          assert.equal(api.name, 'icop-staging-api');
+          assert.equal(api.preview_urls, false);
+          assert.equal(api.d1_databases[0].database_name, 'icop-staging-db');
+          assert.match(api.vars.ACCESS_AUD, /^[a-f0-9]{64}$/);
+          assert.equal(api.vars.ACCESS_IDENTITY_ENABLED, 'false', 'No auth activation until MFA and UAT gates');
+          assert.equal(api.vars.ACCESS_MFA_CONFIRMED, 'false', 'MFA cannot be claimed before Cloudflare Access challenge is verified');
+          assert.ok(!('ACCESS_AUDIT_HMAC_KEY' in api.vars), 'audit signing key must never be a committed variable');
+          assert.equal(web.name, 'icop-staging');
+          assert.ok(web.services.some(x => x.binding === 'ICOP_API' && x.service === 'icop-staging-api'));
+          assert.ok(!main.includes('"binding": "ICOP_API"'), 'production Worker must not attach staging API');
+          assert.ok(!('containers' in api));
+          console.log('PASS: Cloudflare Free staging isolated from production');
+          JS
+
+  live-cloudflare-access-perimeter:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      # No unprotected /health JSON checks; Access now runs before the Worker.
+      - name: Require Cloudflare Access to deny unauthenticated staging traffic
+        run: node infra/cloudflare/free-staging/tests/live-access-gate.mjs
