@@ -3,7 +3,10 @@
   "name": "icop-staging",
   "main": ".open-next/worker.js",
   "compatibility_date": "2026-10-10",
-  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "compatibility_flags": [
+    "nodejs_compat",
+    "global_fetch_strictly_public"
+  ],
   "workers_dev": true,
   "preview_urls": false,
   "assets": {
@@ -14,6 +17,10 @@
     {
       "binding": "WORKER_SELF_REFERENCE",
       "service": "icop-staging"
+    },
+    {
+      "binding": "ICOP_API",
+      "service": "icop-staging-api"
     }
   ]
 }
