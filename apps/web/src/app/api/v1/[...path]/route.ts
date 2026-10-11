@@ -1,5 +1,6 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
+import { getCloudflareContext } from '@opennextjs/cloudflare';
 
 // Browser tokens never pass through client JavaScript. Only this same-origin
 // Next.js BFF reads the httpOnly session cookie and injects bearer auth upstream.
@@ -13,6 +14,17 @@ const MAX_AGE = 8 * 60 * 60;
 // Production must never silently proxy credentials to loopback when the API is missing.
 const API_ORIGIN = process.env.API_INTERNAL_URL?.trim() || (production ? null : 'http://localhost:3001');
 
+// A private service binding is available only on the isolated staging Worker.
+// The production Worker remains unmodified until an independent release gate.
+function stagingApiBinding(): { fetch(request: Request): Promise<Response> } | null {
+  try {
+    return (getCloudflareContext().env as unknown as {
+      ICOP_API?: { fetch(request: Request): Promise<Response> };
+    }).ICOP_API ?? null;
+  } catch {
+    return null; // Local Next.js or non-Cloudflare deployment.
+  }
+}
 type Context = { params: Promise<{ path: string[] }> };
 const methodsWithoutBody = new Set(['GET', 'HEAD']);
 
@@ -81,9 +93,11 @@ async function proxy(request: NextRequest, context: Context): Promise<NextRespon
 
   // Workers Free talks to a VPS API over HTTPS, protected by Cloudflare Access.
   // All credentials stay server-side; browsers only contact this same-origin BFF.
-  if (!API_ORIGIN) return error(503, 'API_NOT_CONFIGURED');
+  const stagingApi = stagingApiBinding();
+  if (!API_ORIGIN && !stagingApi) return error(503, 'API_NOT_CONFIGURED');
   let url: URL;
-  try { url = new URL(API_ORIGIN); }
+  // Service Binding bypasses external DNS and uses Cloudflare's internal route.
+  try { url = new URL(stagingApi ? 'https://icop-staging-api.internal' : API_ORIGIN!); }
   catch { return error(503, 'API_ORIGIN_INVALID'); }
   if (!['https:', 'http:'].includes(url.protocol)) return error(503, 'API_ORIGIN_INVALID');
   // Production must not send credentials to a remote HTTP endpoint.
@@ -93,8 +107,9 @@ async function proxy(request: NextRequest, context: Context): Promise<NextRespon
   const accessId = process.env.CF_ACCESS_CLIENT_ID?.trim();
   const accessSecret = process.env.CF_ACCESS_CLIENT_SECRET?.trim();
   const accessRequired = process.env.API_ACCESS_REQUIRED === 'true';
-  if ((accessRequired && (!accessId || !accessSecret)) ||
-      Boolean(accessId) !== Boolean(accessSecret)) return error(503, 'API_NOT_CONFIGURED');
+  if ((!stagingApi && accessRequired && (!accessId || !accessSecret)) ||
+      (!stagingApi && Boolean(accessId) !== Boolean(accessSecret)))
+    return error(503, 'API_NOT_CONFIGURED');
   url.pathname = '/api/v1/' + path.map(encodeURIComponent).join('/');
   url.search = request.nextUrl.search;
   const headers = new Headers();
@@ -105,7 +120,7 @@ async function proxy(request: NextRequest, context: Context): Promise<NextRespon
   if (token && !login && !webhook) headers.set('authorization', 'Bearer ' + token);
   // Do not accept CF-Access-* headers from the browser. Forward secrets only
   // from trusted BFF runtime variables, for the configured API origin.
-  if (accessId && accessSecret) {
+  if (!stagingApi && accessId && accessSecret) {
     headers.set('CF-Access-Client-Id', accessId);
     headers.set('CF-Access-Client-Secret', accessSecret);
   }
@@ -119,7 +134,7 @@ async function proxy(request: NextRequest, context: Context): Promise<NextRespon
       init.body = request.body;
       init.duplex = 'half';
     }
-    upstream = await fetch(url, init);
+    upstream = stagingApi ? await stagingApi.fetch(new Request(url, init)) : await fetch(url, init);
   } catch {
     return error(502, 'API_UNAVAILABLE');
   }
