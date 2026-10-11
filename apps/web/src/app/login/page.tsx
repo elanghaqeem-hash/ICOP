@@ -26,7 +26,7 @@ export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [backend, setBackend] = useState<'checking' | 'configured' | 'not-configured' | 'unknown'>('checking');
+  const [backend, setBackend] = useState<'checking' | 'configured' | 'not-configured' | 'staging-connected' | 'staging-unreachable' | 'unknown'>('checking');
   const [isCloudflareDev, setIsCloudflareDev] = useState(false);
   const [statusAttempt, setStatusAttempt] = useState(0);
   const canSignIn = backend === 'configured';
@@ -46,7 +46,10 @@ export default function LoginPage() {
         if (!active) return;
         setBackend(status.backend === 'CONFIGURED_UNVERIFIED'
           ? 'configured'
-          : status.backend === 'NOT_CONFIGURED' ? 'not-configured' : 'unknown');
+          : status.backend === 'NOT_CONFIGURED' ? 'not-configured'
+          : status.backend === 'STAGING_CONNECTED_AUTH_DISABLED' ? 'staging-connected'
+          : status.backend === 'STAGING_UNREACHABLE' ? 'staging-unreachable'
+          : 'unknown');
       })
       .catch(() => { if (active) setBackend('unknown'); });
     return () => { active = false; controller.abort(); };
@@ -106,6 +109,12 @@ export default function LoginPage() {
               {backend === 'checking' && 'Memeriksa kesiapan koneksi login…'}
               {backend === 'not-configured' && (
                 <span>Login belum tersedia. Backend ICOP development belum terhubung. Jangan masukkan kredensial perusahaan di lingkungan ini.</span>
+              )}
+              {backend === 'staging-connected' && (
+                <span>Backend Cloudflare staging dan database sudah tersambung untuk pemeriksaan. Login masih dinonaktifkan sampai autentikasi, MFA, dan akun uji lulus UAT.</span>
+              )}
+              {backend === 'staging-unreachable' && (
+                <span>Backend Cloudflare staging belum dapat dijangkau. Login tetap ditutup sementara.</span>
               )}
               {backend === 'configured' && (
                 <span>Koneksi backend sudah dikonfigurasi, tetapi belum dinyatakan lolos UAT. Gunakan hanya akun pengujian yang diizinkan.</span>
