@@ -5,7 +5,8 @@
   "scripts": {
     "deploy": "wrangler deploy --config wrangler.jsonc",
     "dev": "wrangler dev --config wrangler.jsonc",
-    "types": "wrangler types --config wrangler.jsonc"
+    "types": "wrangler types --config wrangler.jsonc",
+    "check:foundation": "node check-foundation.mjs"
   },
   "dependencies": {
     "@cloudflare/containers": "0.3.7"
