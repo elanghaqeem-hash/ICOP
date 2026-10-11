@@ -34,7 +34,11 @@ test('identity/audit schema presence never unlocks auth or business modules', as
   const identityDb = {
     prepare: () => ({
       bind: (version) => ({
-        first: async () => ({version}),
+        // Simulate only migrations 0001+0002, NOT 0003.
+        first: async () => (
+          version === '0003_cf_free_auth_security_foundation'
+            ? null : { version }
+        ),
       }),
     }),
   };
