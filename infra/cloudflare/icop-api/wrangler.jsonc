@@ -12,6 +12,8 @@
     {
       "class_name": "IcopApiContainer",
       "image": "../../../apps/api/Dockerfile",
+      "scheduling_policy": "default",
+      "instance_type": "standard-1",
       "max_instances": 1,
       "instance_type": "standard-1"
     }
