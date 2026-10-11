@@ -43,6 +43,13 @@ export async function resolveAccessIdentity(request, env, ctx) {
       typeof env.ACCESS_AUD !== 'string') {
     return deny(503, 'STAGING_ACCESS_NOT_CONFIGURED');
   }
+  // Independent release gate: Cloudflare Access account membership alone
+  // does NOT prove that an MFA challenge is enforced by the active policy.
+  // This operator-controlled flag is not itself proof; it must be enabled
+  // only AFTER separately verifying Access policy and real MFA UAT.
+  if (env?.ACCESS_MFA_CONFIRMED !== 'true') {
+    return deny(503, 'STAGING_MFA_GATE_PENDING');
+  }
   if (!ctx?.access || typeof ctx.access.getIdentity !== 'function') {
     return deny(403, 'ACCESS_REQUIRED');
   }
