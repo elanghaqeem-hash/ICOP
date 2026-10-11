@@ -171,3 +171,56 @@ export async function consumeRecoveryAndIssueSession({db,tenantId,userId,code,
   }catch{return deny('MFA_RECOVERY_INVALID');}
   return {ok:true,sessionToken:token,expiresAt:now+28800};
 }
+
+
+/** Logout a server-verified subject's *current* token, atomically with audit.
+ * No client-supplied user ID can select an arbitrary other user's session. */
+export async function revokeCurrentSession({db,sessionToken,tenantId,userId,
+  sessionKey,ip,auditKey,now=Math.floor(Date.now()/1000)}) {
+  if(!db?.prepare||!db?.batch||!subject(tenantId,userId)||
+     !Number.isSafeInteger(now)||now<=0)return deny('AUTH_INVALID');
+  const ipHash=await networkDigest(ip,auditKey);
+  if(!ipHash)return deny('AUTH_AUDIT_NOT_CONFIGURED');
+  const digest=await hashSessionToken(sessionToken,sessionKey);
+  if(!digest)return deny('SESSION_INVALID');
+  try {
+    const existing=await stmt(db,'SELECT s.user_id,s.tenant_id,s.revoked_at FROM auth_sessions s WHERE s.session_id_hash=? AND s.tenant_id=? AND s.user_id=? LIMIT 1',
+      digest,tenantId,userId).first();
+    if(!existing||existing.revoked_at!==null && existing.revoked_at!==undefined)
+      return deny('SESSION_INVALID');
+    const x=await db.batch([
+      stmt(db,'UPDATE auth_sessions SET revoked_at=? WHERE session_id_hash=? AND tenant_id=? AND user_id=? AND revoked_at IS NULL',
+        now,digest,tenantId,userId),
+      stmt(db,"INSERT INTO audit_events(tenant_id,actor_id,action,entity_type,entity_id,ip) VALUES(?,?,'auth.logout','user',?,?)",
+        tenantId,userId,userId,ipHash)
+    ]);
+    if(!goodBatch(x,2)||x.some(y=>Number(y.meta?.changes)!==1))
+      return deny('SESSION_REVOKE_FAILED');
+  }catch{return deny('SESSION_REVOKE_FAILED');}
+  return {ok:true};
+}
+
+/** Logout all sessions across devices: increment token_version and revoke
+ * all session rows in one D1 transaction with actor-scoped append-only audit.
+ * The actor must be bound to an existing, freshly verified application
+ * session by a trusted handler, not received from request JSON. */
+export async function revokeAllSessions({db,tenantId,userId,ip,auditKey,
+  now=Math.floor(Date.now()/1000)}) {
+  if(!db?.prepare||!db?.batch||!subject(tenantId,userId)||
+     !Number.isSafeInteger(now)||now<=0)return deny('AUTH_INVALID');
+  const ipHash=await networkDigest(ip,auditKey);
+  if(!ipHash)return deny('AUTH_AUDIT_NOT_CONFIGURED');
+  try {
+    const x=await db.batch([
+      stmt(db,'UPDATE users SET token_version=token_version+1 WHERE tenant_id=? AND id=? AND is_active=1',
+        tenantId,userId),
+      stmt(db,'UPDATE auth_sessions SET revoked_at=? WHERE tenant_id=? AND user_id=? AND revoked_at IS NULL',
+        now,tenantId,userId),
+      stmt(db,"INSERT INTO audit_events(tenant_id,actor_id,action,entity_type,entity_id,ip) VALUES(?,?,'auth.logout_all','user',?,?)",
+        tenantId,userId,userId,ipHash),
+    ]);
+    if(!goodBatch(x,3)||Number(x[0]?.meta?.changes)!==1||
+       Number(x[2]?.meta?.changes)!==1)return deny('SESSION_REVOKE_FAILED');
+  }catch{return deny('SESSION_REVOKE_FAILED');}
+  return {ok:true,allSessionsRevoked:true};
+}
