@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import worker from '../src/worker.mjs';
 
 const ORIGIN = 'https://icop-staging-api.example.invalid';
-const FLAGS = { ACCESS_IDENTITY_ENABLED: 'true', ACCESS_AUD: 'staging-access-app' };
+const FLAGS = { ACCESS_IDENTITY_ENABLED: 'true', ACCESS_AUD: 'staging-access-app', ACCESS_AUDIT_HMAC_KEY: '1a'.repeat(32) };
 const PROFILE = {
   id: 'synthetic-1', tenant_id: 'tenant-deit', email_normalized: 'test@example.invalid',
   full_name: 'Synthetic Identity', code: 'DEIT', role: 'auditor',
@@ -91,20 +91,22 @@ test('trusted Access identity returns pending-only status and writes tenant-scop
   assert.equal(r.status,202);
   assert.equal(r.data.status,'identity_verified_application_auth_pending');
   assert.equal(r.data.tenant.code,'DEIT');
-  assert.equal(r.data.user.role,'auditor');
-  assert.equal(r.data.user.forcePasswordChange,true);
+  assert.equal('user' in r.data,false, 'pre-session identity must not expose name/role/user ID');
+  assert.equal('user' in r.data,false, 'pre-session identity must not expose name/role/user ID');
   assert.equal(r.data.applicationAuthenticated,false);
   assert.equal(r.data.mfaVerified,false);
   assert.deepEqual(r.data.permissions,[]);
   assert.equal('token' in r.data,false);
   assert.equal('password_hash' in r.data,false);
   const audit=calls.find(c=>c.sql.includes('INSERT INTO audit_events'));
-  assert.deepEqual(audit.params,['tenant-deit','synthetic-1','synthetic-1','192.0.2.44']);
+  assert.deepEqual(audit.params.slice(0,3),['tenant-deit','synthetic-1','synthetic-1']);
+  assert.match(audit.params[3],/^hmac-sha256:[a-f0-9]{64}$/);
+  assert.ok(!JSON.stringify(audit.params).includes('192.0.2.44'), 'raw source IP must not be persisted');
   assert.equal(r.headers.get('cache-control'),'no-store');
 });
 test('audit write failure denies identity resolution; do not silently ignore',async()=>{
   const {DB}=fakeDb({auditFail:true});
-  const r=await api(request(),{...FLAGS,DB},access());
+  const r=await api(request('DEIT',{'cf-connecting-ip':'2001:db8::1'}),{...FLAGS,DB},access());
   assert.equal(r.status,503);
   assert.equal(r.data.code,'STAGING_AUDIT_UNAVAILABLE');
   assert.equal(JSON.stringify(r.data).includes('do not reveal'),false);
@@ -118,4 +120,31 @@ test('access-me does not activate legacy login, MFA or any business endpoint',as
   assert.equal(business.status,503);
   const readiness=await api(new Request(ORIGIN+'/api/v1/system/readiness'),{...FLAGS,DB},access());
   assert.ok(Object.values(readiness.data.capabilities).every(v=>v===false));
+});
+
+test('no audit HMAC secret or missing trusted IP cannot yield a success',async()=>{
+  const {DB,calls}=fakeDb();
+  const noKey=await api(request('DEIT',{'cf-connecting-ip':'192.0.2.44'}),
+    {...FLAGS,ACCESS_AUDIT_HMAC_KEY:undefined,DB},access());
+  assert.equal(noKey.status,503);
+  assert.equal(noKey.data.code,'STAGING_AUDIT_NOT_CONFIGURED');
+  const noIp=await api(request(),{...FLAGS,DB},access());
+  assert.equal(noIp.status,503);
+  assert.equal(noIp.data.code,'STAGING_AUDIT_NOT_CONFIGURED');
+  assert.equal(calls.filter(c=>c.sql.includes('INSERT INTO audit_events')).length,0);
+});
+test('empty or malformed audit result cannot authorize identity',async()=>{
+  const {DB}=fakeDb();
+  const originalPrepare=DB.prepare;
+  DB.prepare=(sql)=>{
+    const q=originalPrepare(sql);
+    if(sql.includes('INSERT INTO audit_events')) {
+      return {bind:()=>({run:async()=>({success:false})})};
+    }
+    return q;
+  };
+  const r=await api(request('DEIT',{'cf-connecting-ip':'192.0.2.44'}),
+    {...FLAGS,DB},access());
+  assert.equal(r.status,503);
+  assert.equal(r.data.code,'STAGING_AUDIT_UNAVAILABLE');
 });
