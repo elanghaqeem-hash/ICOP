@@ -101,3 +101,46 @@ tests, not a replacement for application-level tenant filtering or full UAT.
 Final release gates still require real authentication/MFA, secret handling,
 abuse prevention, tenant data-access negative tests, restore rehearsal and
 module-by-module PostgreSQL -> D1 migration.
+
+## Phase 3A: Cloudflare Access identity gate (October 2026)
+
+This code is a **read-only identity onboarding check**, NOT a replacement for
+the original Fastify JWT/password/TOTP auth in `apps/api/src/modules/auth`.
+
+- New path: `GET /api/v1/auth/access-me`.
+- **Feature is disabled by default**; absent `ACCESS_IDENTITY_ENABLED=true`
+  AND exact `ACCESS_AUD` yields 503.
+- A protected Worker supplies signed-in identity through trusted
+  `ctx.access.getIdentity()`, NEVER a browser-controlled email/role/JWT header.
+- For any enabled request, `ctx.access.aud` must match `ACCESS_AUD`.
+- Client must specify an explicit valid `X-ICOP-Tenant` (e.g. `DEIT`).
+  D1 resolves the user's normalized verified email *within* that tenant;
+  unknown, inactive, cross-tenant or invalid-role accounts fail with 403.
+- Successful identity lookup must append `auth.access_identity_checked`
+  to immutable tenant-scoped audit history. DB/audit error fails closed.
+- Even success returns **202** with `applicationAuthenticated=false`,
+  `mfaVerified=false` and `permissions=[]`; never issues a bearer token.
+- The original `POST /api/v1/auth/login` remains 503 and all business
+  endpoints remain disabled. Empty real D1 users table means no one is provisioned.
+
+### Before enabling in Cloudflare (NOT DONE)
+
+1. Create an Access application protecting `icop-staging-api` (or dedicated
+   staging origin) **before** setting feature flags. Restrict eligible users
+   by explicitly approved email(s) and enforce MFA at your identity provider.
+   Verify both policy application and that `ctx.access` is available.
+2. Set `ACCESS_AUD` to the exact Access application audience and
+   `ACCESS_IDENTITY_ENABLED=true` in the **staging API Worker only**.
+   Do not use dummy shared accounts or production `SEED_PASSWORD`.
+3. Provision separately approved staging-only tenant memberships with securely
+   derived passwords if/when full app-password authentication is implemented.
+4. Execute UAT U01 (password-change/MFA), U02 (MFA reset/revocation), and U24
+   (audit including IP). **None of these UATs is marked complete by this gate.**
+5. If enabling Access on the `workers.dev` hostname, CI health tests that
+   run without identity must be redesigned to use private authenticated
+   health tests, or move health to a separate safe monitoring boundary.
+
+Policy source: `apps/api/src/lib/rbac.ts`,
+`apps/api/src/modules/auth/policy.ts`, uploaded `19-UAT-Pack.md`.
+Cloudflare native identity reference:
+https://developers.cloudflare.com/workers/configuration/cloudflare-access/
