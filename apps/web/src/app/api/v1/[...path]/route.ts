@@ -1,5 +1,6 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
+import { getCloudflareContext } from '@opennextjs/cloudflare';
 
 // Browser tokens never pass through client JavaScript. Only this same-origin
 // Next.js BFF reads the httpOnly session cookie and injects bearer auth upstream.
@@ -12,6 +13,21 @@ const CSRF = production ? '__Host-icop-csrf' : 'icop-dev-csrf';
 const MAX_AGE = 8 * 60 * 60;
 // Production must never silently proxy credentials to loopback when the API is missing.
 const API_ORIGIN = process.env.API_INTERNAL_URL?.trim() || (production ? null : 'http://localhost:3001');
+
+// Cloudflare deployment prefers a private Service Binding to the new icop-api
+// Worker (no publicly addressable backend URL). For local/other hosts we retain
+// the existing explicit API_INTERNAL_URL behavior. Never read this at module load.
+function privateApiService(): { fetch(request: Request): Promise<Response> } | null {
+  try {
+    const env = getCloudflareContext().env as unknown as {
+      ICOP_API?: { fetch(request: Request): Promise<Response> };
+    };
+    return env.ICOP_API ?? null;
+  } catch {
+    // Next.js development outside Cloudflare does not have a Workers context.
+    return null;
+  }
+}
 type Context = { params: Promise<{ path: string[] }> };
 const methodsWithoutBody = new Set(['GET', 'HEAD']);
 
@@ -78,9 +94,11 @@ async function proxy(request: NextRequest, context: Context): Promise<NextRespon
   const token = request.cookies.get(SESSION)?.value;
   if (!token && !login && !webhook) return error(401, 'UNAUTHENTICATED');
 
-  if (!API_ORIGIN) return error(503, 'API_NOT_CONFIGURED');
+  const privateApi = privateApiService();
+  if (!privateApi && !API_ORIGIN) return error(503, 'API_NOT_CONFIGURED');
   let url: URL;
-  try { url = new URL(API_ORIGIN); } catch { return error(503, 'API_ORIGIN_INVALID'); }
+  try { url = new URL(API_ORIGIN ?? 'https://icop-api.internal'); }
+  catch { return error(503, 'API_ORIGIN_INVALID'); }
   if (!['https:', 'http:'].includes(url.protocol)) return error(503, 'API_ORIGIN_INVALID');
   url.pathname = '/api/v1/' + path.map(encodeURIComponent).join('/');
   url.search = request.nextUrl.search;
@@ -100,7 +118,7 @@ async function proxy(request: NextRequest, context: Context): Promise<NextRespon
       init.body = request.body;
       init.duplex = 'half';
     }
-    upstream = await fetch(url, init);
+    upstream = privateApi ? await privateApi.fetch(new Request(url, init)) : await fetch(url, init);
   } catch {
     return error(502, 'API_UNAVAILABLE');
   }
