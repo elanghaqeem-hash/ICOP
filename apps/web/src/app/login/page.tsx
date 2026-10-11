@@ -78,7 +78,6 @@ export default function LoginPage() {
             </span>
           </div>
           <div className="auth-showcase__copy">
-            <span className="auth-eyebrow">DEFENDIT360 WORKSPACE</span>
             <h1>Bisnis siber yang terhubung. <span>Dalam satu platform.</span></h1>
             <p>Ruang kerja terpadu untuk mengelola hubungan pelanggan, penawaran, tender, dan delivery layanan cybersecurity serta IT.</p>
             <div className="auth-showcase__modules" aria-label="Area kerja ICOP">
