@@ -17,6 +17,10 @@
     {
       "binding": "WORKER_SELF_REFERENCE",
       "service": "icop"
+    },
+    {
+      "binding": "ICOP_READINESS",
+      "service": "icop-staging-api"
     }
   ]
 }
