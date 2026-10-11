@@ -60,11 +60,19 @@ jobs:
             --data '{"tenant":"nonexistent"}')"
           test "$code" = 503
           node -e 'const d=require("/tmp/icop-auth.json");if(d.code!=="STAGING_AUTH_NOT_READY")process.exit(1);console.log("PASS: live auth correctly disabled")'
+          # Access has not been enabled on this account; identity gate must fail closed.
+          code="$(curl --silent --show-error --max-time 15 -o /tmp/icop-access.json -w '%{http_code}' \
+            -H 'x-icop-tenant: DEIT' \
+            -H 'x-user-role: super_admin' \
+            -H 'x-user-email: attacker@example.invalid' \
+            "$ROOT/api/v1/auth/access-me")"
+          test "$code" = 503
+          node -e 'const d=require("/tmp/icop-access.json");if(d.code!=="STAGING_ACCESS_NOT_CONFIGURED")process.exit(1);console.log("PASS: live Access identity disabled, forged headers ignored")'
           # Gate 3A: a staging identity endpoint MUST reject unauthenticated
           # requests until native Cloudflare Access is explicitly configured.
           code="$(curl --silent --show-error --max-time 15 -o /tmp/icop-access.json -w '%{http_code}' \
             -H 'X-ICOP-Tenant: DEIT' "$ROOT/api/v1/auth/access-me")"
           test "$code" = 503
           node -e 'const d=require("/tmp/icop-access.json");if(d.code!=="STAGING_ACCESS_NOT_CONFIGURED")process.exit(1);console.log("PASS: identity gate closed without Access approval")'
-          rm -f /tmp/icop-health.json /tmp/icop-readiness.json /tmp/icop-auth.json
+          rm -f /tmp/icop-health.json /tmp/icop-readiness.json /tmp/icop-auth.json /tmp/icop-access.json
           rm -f /tmp/icop-access.json
