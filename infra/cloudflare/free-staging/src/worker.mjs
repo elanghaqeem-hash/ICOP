@@ -1,3 +1,5 @@
+import { resolveAccessIdentity } from './access-identity.mjs';
+
 // ICOP Cloudflare Workers Free staging API — bootstrap only.
 // NO user records, passwords, impersonation, or business-data migration.
 // Do not expose this Worker as a production API until dedicated auth/RBAC/MFA
@@ -46,7 +48,7 @@ async function identitySchemaPrepared(env) {
 const UNAVAILABLE = { code: 'MODULE_NOT_MIGRATED', message: 'Cloudflare staging: this module is not yet available.' };
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const path = url.pathname;
     const healthy = path === '/health' && request.method === 'GET';
@@ -71,6 +73,17 @@ export default {
           background_jobs: false,
         },
       });
+    }
+
+    // Access identities can only perform a read-only onboarding check.
+    // No app session is issued, and this is NOT a replacement for /auth/login.
+    if (path === '/api/v1/auth/access-me' && request.method === 'GET') {
+      if (!await identitySchemaPrepared(env)) {
+        return reply(503, { code: 'STAGING_IDENTITY_SCHEMA_NOT_READY' });
+      }
+      const identity = await resolveAccessIdentity(request, env, ctx);
+      if (!identity.ok) return reply(identity.status, { code: identity.code });
+      return reply(identity.status, identity.body);
     }
 
     // Explicit fail-closed response. No password processing or JWTs until the
