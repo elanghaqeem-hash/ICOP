@@ -1,0 +1,30 @@
+#!/usr/bin/env node
+// Static wiring checks only. This is NOT an integration or deployment test.
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+const root = resolve(import.meta.dirname, '../../..');
+const read = (path) => readFileSync(resolve(root, path), 'utf8');
+const gateway = JSON.parse(read('infra/cloudflare/icop-api/wrangler.jsonc'));
+const frontendConfig = read('apps/web/wrangler.jsonc');
+const bff = read('apps/web/src/app/api/v1/[...path]/route.ts');
+const backend = read('infra/cloudflare/icop-api/src/index.ts');
+const docker = read('apps/api/Dockerfile');
+assert.equal(gateway.name, 'icop-api');
+assert.equal(gateway.workers_dev, false, 'API worker must remain private');
+assert.equal(gateway.preview_urls, false);
+assert.equal(gateway.containers.length, 1);
+assert.equal(gateway.containers[0].max_instances, 1);
+assert.equal(gateway.containers[0].class_name, 'IcopApiContainer');
+assert.ok(gateway.durable_objects.bindings.some(x => x.name === 'ICOP_CONTAINER'));
+assert.ok(frontendConfig.includes('WORKER_SELF_REFERENCE'), 'preserve OpenNext self binding');
+assert.ok(bff.includes('privateApiService()'));
+assert.ok(bff.includes('privateApi.fetch(new Request(url, init))'));
+assert.ok(bff.includes('checkToken(request.cookies.get(CSRF)'));
+assert.ok(backend.includes('API_BOOTSTRAP_INCOMPLETE'));
+assert.ok(backend.includes("JOB_WORKER_ENABLED: 'false'"));
+assert.ok(backend.includes("SCHEDULER_ENABLED: 'false'"));
+assert.ok(docker.includes('tesseract-ocr'));
+assert.ok(docker.includes('ghostscript'));
+assert.ok(docker.includes('qpdf'));
+console.log('PASS: static Cloudflare API wiring invariants. Runtime/DB/container tests STILL REQUIRED.');
