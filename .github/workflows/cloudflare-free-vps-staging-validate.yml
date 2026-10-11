@@ -1,0 +1,58 @@
+name: ICOP Cloudflare Free + VPS staging config (no deployment)
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'docker-compose.cloudflare-free-staging.yml'
+      - 'infra/staging/.env.api.example'
+      - 'infra/staging/.env.tunnel.example'
+      - 'infra/staging/cloudflare-free-vps/**'
+      - 'apps/web/wrangler.staging.jsonc'
+      - 'apps/web/src/app/api/v1/**'
+      - '.github/workflows/cloudflare-free-vps-staging-validate.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate-config:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate synthetic CI-only staging config (not deployed)
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          cp infra/staging/.env.api.example infra/staging/.env.api
+          cp infra/staging/.env.tunnel.example infra/staging/.env.tunnel
+          dbpass="$(openssl rand -hex 32)"
+          jwt="$(openssl rand -hex 48)"
+          master="$(openssl rand -hex 32)"
+          sed -i "s/REPLACE_RANDOM_HEX_48_OR_MORE/$dbpass/g" infra/staging/.env.api
+          sed -i "s/REPLACE_RANDOM_HEX_64_OR_MORE/$jwt/g" infra/staging/.env.api
+          sed -i "s/REPLACE_RANDOM_HEX_64/$master/g" infra/staging/.env.api
+          sed -i "s/REPLACE_STAGING_FRONTEND_HOST/stage.example.invalid/g" infra/staging/.env.api
+          sed -i "s/REPLACE_WITH_CLOUDFLARE_TUNNEL_TOKEN/$(openssl rand -hex 64)/g" infra/staging/.env.tunnel
+          chmod 600 infra/staging/.env.api infra/staging/.env.tunnel
+      - name: Check secure staging preflight and Compose syntax
+        run: bash infra/staging/cloudflare-free-vps/preflight.sh
+      - name: Confirm API/database have no published host ports
+        shell: bash
+        run: |
+          docker compose --env-file infra/staging/.env.api -f docker-compose.cloudflare-free-staging.yml config --format json |
+          python3 -c 'import json,sys; d=json.load(sys.stdin); assert all(not d["services"][n].get("ports") for n in ("api","postgres","tunnel")); print("PASS: no host published API/DB/tunnel ports")'
+      - name: Validate staging Worker is separate from production
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          a=json.load(open('apps/web/wrangler.staging.jsonc'))
+          assert a['name']=='icop-staging'
+          assert a['services'][0]['service']=='icop-staging'
+          assert a['preview_urls'] is False
+          print('PASS: isolated Cloudflare staging Worker config')
+          PY
+      - name: Clean synthetic CI credentials
+        if: always()
+        run: rm -f infra/staging/.env.api infra/staging/.env.tunnel

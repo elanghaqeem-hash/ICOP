@@ -36,7 +36,7 @@ mock.listen(0, '127.0.0.1');
 await once(mock, 'listening');
 const port = mock.address().port;
 const next = spawn('node', ['node_modules/next/dist/bin/next', 'start', '-p', '3097', '-H', '127.0.0.1'],
-  { env: { ...process.env, NODE_ENV: 'production', APP_PUBLIC_ORIGIN: base, API_INTERNAL_URL: `http://127.0.0.1:${port}` }, stdio: ['ignore', 'pipe', 'pipe'] });
+  { env: { ...process.env, NODE_ENV: 'production', APP_PUBLIC_ORIGIN: base, API_INTERNAL_URL: `http://127.0.0.1:${port}`, API_ACCESS_REQUIRED: 'true', CF_ACCESS_CLIENT_ID: 'ci-access-client', CF_ACCESS_CLIENT_SECRET: 'ci-access-secret-not-production' }, stdio: ['ignore', 'pipe', 'pipe'] });
 let stdout = '';
 next.stdout.on('data', (d) => { stdout = (stdout + d.toString()).slice(-2500); });
 next.stderr.on('data', (d) => { stdout = (stdout + d.toString()).slice(-2500); });
@@ -83,8 +83,12 @@ try {
   const cookie = fromCookies(login);
   const csrf = extract(cookie, '__Host-icop-csrf');
   const me = await send('/api/v1/auth/me', 'GET', { cookie });
-  assert.equal((await me.json()).id, user.id);
+  const meData = await me.json();
+  assert.equal(meData.id, user.id);
   assert.equal(calls.at(-1).headers.authorization, 'Bearer server-only-jwt');
+  assert.equal(calls.at(-1).headers['cf-access-client-id'], 'ci-access-client');
+  assert.equal(calls.at(-1).headers['cf-access-client-secret'], 'ci-access-secret-not-production');
+  assert.ok(!JSON.stringify(meData).includes('ci-access-secret'), 'Access secret leaked in response');
 
   const missing = await send('/api/v1/test-resource', 'POST', { cookie, body: '{}' });
   assert.equal(missing.status, 403);
