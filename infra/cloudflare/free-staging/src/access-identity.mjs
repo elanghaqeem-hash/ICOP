@@ -17,6 +17,25 @@ const ROLES = new Set([
 
 const deny = (status, code) => ({ ok: false, status, code });
 
+// Audit attribution must be pseudonymized before it reaches D1. A distinct
+// staging-only HMAC secret prevents plaintext client IP disclosure in audit rows.
+async function networkAuditKey(request, env) {
+  const keyHex = env?.ACCESS_AUDIT_HMAC_KEY;
+  const address = request.headers.get('cf-connecting-ip')?.trim();
+  if (typeof keyHex !== 'string' || !/^[0-9a-f]{64}$/i.test(keyHex) ||
+      typeof address !== 'string' || !/^[0-9a-fA-F:.]{3,64}$/.test(address) ||
+      !globalThis.crypto?.subtle) return null;
+  const rawKey = Uint8Array.from(keyHex.match(/../g), pair => parseInt(pair, 16));
+  const key = await crypto.subtle.importKey(
+    'raw', rawKey, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']
+  );
+  const digest = await crypto.subtle.sign(
+    'HMAC', key, new TextEncoder().encode('icop-staging-audit-ip-v1:' + address)
+  );
+  return 'hmac-sha256:' + Array.from(new Uint8Array(digest),
+    byte => byte.toString(16).padStart(2,'0')).join('');
+}
+
 export async function resolveAccessIdentity(request, env, ctx) {
   // Explicit default-deny feature gate: staging remains safe before Access
   // and the MFA policy are configured. No ambient shared account credentials.
@@ -70,12 +89,14 @@ export async function resolveAccessIdentity(request, env, ctx) {
   // Stage 3B must implement app-level MFA/renewal or formal equivalence checks.
   // Until then no bearer JWT, session cookies, or business permissions.
   try {
-    const ip = (request.headers.get('cf-connecting-ip') || '').slice(0, 64);
-    await env.DB.prepare(`
+    const ip = await networkAuditKey(request, env);
+    if (!ip) return deny(503, 'STAGING_AUDIT_NOT_CONFIGURED');
+    const record = await env.DB.prepare(`
       INSERT INTO audit_events
         (tenant_id, actor_id, action, entity_type, entity_id, ip)
       VALUES (?, ?, 'auth.access_identity_checked', 'user', ?, ?)
     `).bind(user.tenant_id, user.id, user.id, ip).run();
+    if (record?.success !== true) return deny(503, 'STAGING_AUDIT_UNAVAILABLE');
   } catch {
     return deny(503, 'STAGING_AUDIT_UNAVAILABLE');
   }
@@ -85,12 +106,8 @@ export async function resolveAccessIdentity(request, env, ctx) {
       status: 'identity_verified_application_auth_pending',
       identityProvider: 'cloudflare_access',
       tenant: { code: user.code },
-      user: {
-        id: user.id,
-        fullName: user.full_name,
-        role: user.role,
-        forcePasswordChange: user.force_password_change === 1,
-      },
+      // Do not disclose names, roles, membership IDs or password-change state
+      // before an authenticated ICOP session and MFA are established.
       accessAuthenticated: true,
       applicationAuthenticated: false,
       mfaVerified: false,
