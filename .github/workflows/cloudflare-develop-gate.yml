@@ -51,6 +51,18 @@ jobs:
           done
           if [ "$ok" != true ]; then tail -n 80 /tmp/icop-dev-worker.log; exit 1; fi
           grep -Eiq 'ICOP|login|masuk' /tmp/icop-dev-login.html
-          curl -fsS --max-time 8 http://127.0.0.1:8787/api/system/status |
-            grep -q '"frontend":"UP"'
-          echo "Cloudflare Develop gate PASS. Manual deployment and Access review are separate."
+          curl -fsS --max-time 8 http://127.0.0.1:8787/api/system/status > /tmp/icop-dev-status.json
+          grep -q '"frontend":"UP"' /tmp/icop-dev-status.json
+          grep -q '"backend":"NOT_CONFIGURED"' /tmp/icop-dev-status.json
+          grep -q '"readyForBusiness":false' /tmp/icop-dev-status.json
+
+          # UAT U01/U25: login must fail closed without a backend, never send
+          # credentials to an implicit localhost service or bypass Origin/CSRF.
+          auth_code="$(curl -sS --max-time 8 -o /tmp/icop-dev-auth.json -w '%{http_code}' \
+            -X POST -H 'Origin: http://localhost:8787' \
+            -H 'Content-Type: application/json' \
+            -d '{"tenant":"DEIT","email":"nobody@example.invalid","password":"invalid"}' \
+            http://localhost:8787/api/v1/auth/login)"
+          test "$auth_code" = 503 || { echo "Login without backend should return 503, got $auth_code"; exit 1; }
+          grep -q '"code":"API_NOT_CONFIGURED"' /tmp/icop-dev-auth.json
+          echo "Cloudflare Develop gate PASS: login, readiness, backend fail-closed. Manual deploy separate."
