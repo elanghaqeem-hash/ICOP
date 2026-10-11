@@ -26,6 +26,26 @@ test('capability manifest never claims production readiness',async () => {
   assert.equal(r.status,200);
   assert.equal(r.data.status,'bootstrap_only');
   assert.ok(Object.values(r.data.capabilities).every(x=>x===false));
+  assert.equal(r.data.schema.identity_audit_prepared,false);
+});
+
+test('identity/audit schema presence never unlocks auth or business modules', async () => {
+  const identityDb = {
+    prepare: () => ({
+      bind: (version) => ({
+        first: async () => ({version}),
+      }),
+    }),
+  };
+  const r = await json(await api.fetch(url('/api/v1/system/readiness'),{DB:identityDb}));
+  assert.equal(r.status,200);
+  assert.equal(r.data.schema.identity_audit_prepared,true);
+  assert.ok(Object.values(r.data.capabilities).every(x=>x===false));
+  const login = await json(await api.fetch(new Request(
+    'https://icop-staging-api.example.invalid/api/v1/auth/login', {method:'POST'}
+  ), {DB:identityDb}));
+  assert.equal(login.status,503);
+  assert.equal(login.data.code,'STAGING_AUTH_NOT_READY');
 });
 test('login and unported modules fail closed without user provisioning',async ()=>{
   const l=await json(await api.fetch(new Request('https://icop-staging-api.example.invalid/api/v1/auth/login',{method:'POST',body:'{"password":"should-not-be-read"}'}),{DB:db}));
