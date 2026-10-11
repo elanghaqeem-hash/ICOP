@@ -96,7 +96,7 @@ test('U01: recovery generation contains exactly ten only-hash D1 inserts',async(
   assert.equal(x.recoveryCodes.length,10);
   assert.equal(new Set(x.recoveryCodes).size,10);
   assert.deepEqual(db.calls.find(c=>'batchSize'in c),{batchSize:12});
-  const inserts=db.calls.filter(c=>c.sql.startsWith('INSERT INTO mfa_recovery_codes'));
+  const inserts=db.calls.filter(c=>typeof c.sql==='string'&&c.sql.startsWith('INSERT INTO mfa_recovery_codes'));
   assert.equal(inserts.length,10);
   assert.ok(inserts.every(c=>c.args[3]===1),'10 codes must share one issuance generation');
   for(const code of x.recoveryCodes)assert.ok(!JSON.stringify(inserts).includes(code));
