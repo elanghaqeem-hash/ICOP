@@ -21,6 +21,8 @@ jobs:
           node-version: '22'
       - name: Run Cloudflare-native staging API security tests
         run: node --test infra/cloudflare/free-staging/tests/*.test.mjs
+      - name: Validate identity/tenant/audit schema with in-memory SQLite
+        run: python3 -m unittest discover -s infra/cloudflare/free-staging/tests -p 'test_*.py' -v
       - name: Confirm isolated Worker/D1 wiring and no production changes
         run: |
           node --input-type=module <<'JS'
