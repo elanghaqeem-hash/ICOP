@@ -149,7 +149,7 @@ export default function LoginPage() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
-                  disabled={busy}
+                  disabled={busy || !canSignIn}
                 />
                 <button
                   type="button"
