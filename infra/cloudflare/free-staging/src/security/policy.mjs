@@ -42,7 +42,12 @@ export function authorizationGate({actor, resourceTenantId, permission}) {
       actor.tenantId !== resourceTenantId) return 'TENANT_DENIED';
   if (!actor.isActive) return 'INACTIVE_ACCOUNT';
   if (actor.forcePasswordChange) return 'PASSWORD_CHANGE_REQUIRED';
-  if (mustUseMfa(actor.role, actor.mfaEnabled) && !actor.mfaVerified) return 'MFA_REQUIRED';
+  // A stale or invalid session must never claim MFA success after an account
+  // unenrolls MFA. Enrollment + verified session are both required when the
+  // role has mandatory MFA; contradictory MFA state is always rejected.
+  if (actor.mfaVerified && !actor.mfaEnabled) return 'MFA_REQUIRED';
+  if (mustUseMfa(actor.role, actor.mfaEnabled) &&
+      (!actor.mfaEnabled || !actor.mfaVerified)) return 'MFA_REQUIRED';
   if (!Object.prototype.hasOwnProperty.call(ALLOWED, permission) ||
       !ALLOWED[permission].includes(actor.role)) return 'PERMISSION_DENIED';
   return 'ALLOW';
