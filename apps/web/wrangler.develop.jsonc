@@ -1,0 +1,19 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // Development-only runtime configuration for the existing ICOP Worker.
+  // Do not use this service binding for an unrestricted API proxy.
+  "name": "icop",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2026-10-10",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "previews": {},
+  "preview_urls": false,
+  "services": [
+    { "binding": "WORKER_SELF_REFERENCE", "service": "icop" },
+    { "binding": "ICOP_STAGING_STATUS", "service": "icop-staging-api" }
+  ]
+}
