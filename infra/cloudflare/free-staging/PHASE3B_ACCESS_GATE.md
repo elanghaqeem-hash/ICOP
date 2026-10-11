@@ -95,6 +95,49 @@ https://developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings
 - Do not configure global Zero Trust MFA settings or replace the existing
   Access allow policy without an operator-reviewed lockout and rollback plan.
 
+## Live verified Access MFA settings (12 October 2026)
+
+The connected Cloudflare account API reports:
+- Organization `mfa_required_for_all_apps=true`.
+- Organization allowed factors: `totp`, `biometrics`, and `security_key`; organization MFA duration `24h`.
+- The **staging-only Access application** contains `mfa_config.mfa_disabled=false`,
+  the same three allowed factors, and a **6h** MFA duration.
+- The existing Access allow policy has empty `require`, but **has no MFA
+  override**. The effective application/organization independent MFA setting
+  is enabled; the absence of a separate policy Require rule alone does not
+  mean Access MFA is disabled.
+- **Actual interactive sign-in plus an MFA challenge has NOT been tested.**
+  `ACCESS_MFA_CONFIRMED` therefore stays `false`, and the ICOP login gate
+  stays `false`. A flag does not prove a real challenge took place.
+
+### Runtime safeguard synchronization
+
+The connected Cloudflare Workers settings API accepted a stage-only
+`PATCH /workers/scripts/icop-staging-api/settings` (HTTP 200).
+A follow-up read confirmed:
+`ACCESS_IDENTITY_ENABLED=false`, `ACCESS_MFA_CONFIRMED=false`,
+`ACCESS_AUD` unchanged and `DB` still bound to `icop-staging-db`.
+
+This is **settings synchronization only**. It is NOT proof that the latest
+GitHub `src/access-identity.mjs` module was redeployed. Do not toggle either
+flag to true until the exact deployed source and authorized MFA login are
+verified. Production `icop` was never targeted.
+
+### Synthetic DEIT identity UAT
+
+`tests/access-identity.test.mjs` now exercises the staged security contract
+with synthetic `*.invalid` email profiles and an in-memory DB:
+- `DEIT` and disabled flags reject before membership/audit queries.
+- Trusted `ctx.access` plus a matched `DEIT` and normalized email can yield
+  only `202` (pre-session) in a simulated approved-gate fixture.
+- Spoofed email/role headers cannot change the provider identity.
+- Cross-tenant and inactive memberships deny without issuing a session.
+- No synthetic profile is inserted into actual staging D1.
+
+**These are code tests, not a real administrator login**. D1 still has no
+tenants, users, or sessions. Live positive identity UAT requires separately
+approved and recorded tenant/user provisioning after MFA challenge verification.
+
 ## References
 
 - Cloudflare Workers Access: https://developers.cloudflare.com/workers/configuration/cloudflare-access/
