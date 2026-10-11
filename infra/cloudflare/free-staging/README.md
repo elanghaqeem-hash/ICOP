@@ -154,3 +154,39 @@ https://developers.cloudflare.com/workers/configuration/cloudflare-access/
 - The staging Worker `/api/v1/system/readiness` now reports `schema.auth_security_prepared`. Authentication and MFA capabilities remain `false` and `POST /api/v1/auth/login` remains 503.
 - Worker deployment requires a **multi-module upload** including `worker.mjs` and `access-identity.mjs` or standard Wrangler deploy; uploading the main module alone fails because it imports the Access module.
 - This is a **database/policy/test milestone only**. It does not establish secure runtime password hashing, real auth session issue/revocation, MFA enrollment/verification, or end-to-end login/UAT readiness. Never promote to `icop` production at this stage.
+
+
+## Phase 3B — Workers WebCrypto prerequisites (11 October 2026)
+
+The Phase 3B code adds **isolated cryptographic primitives, not public
+authentication endpoints**:
+
+- `src/security/totp.mjs`: RFC 4226/6238 TOTP SHA-1, 6 digits, 30-second
+  step with ±1-step tolerance, last-used-step guard, plus D1 primary-key
+  replay reservation that returns denial when a duplicate/DB error occurs.
+  Independent RFC vectors and negative/replay tests are in `tests/totp.test.mjs`.
+- `src/security/session.mjs`: CSPRNG session token helper, HMAC-SHA256 keyed
+  session digest, and deny-by-default D1 session validation for tenant, user
+  active flag, token version, expiration, revocation, MFA and SoD permissions.
+  Regression tests include expired/revoked sessions, cross-tenant access,
+  password-change and MFA enforcement. The raw token is never intended to be
+  stored in D1, and HMAC key material must come from a secret store.
+- **No code in the running Worker creates a new session, verifies an app
+  password, changes a password or enrolls MFA.** Worker `/api/v1/auth/login`
+  continues to respond 503. These utilities are dormant until approved
+  authentication, enrolment and Cloudflare Access gate integration exists.
+
+**Newly verified external blocker:** The Cloudflare Access applications API
+returned `access.api.error.not_enabled` for the connected Cloudflare account
+on 11 October 2026. Do not set `ACCESS_IDENTITY_ENABLED=true` before Access
+has been configured with the correct audience, domain, deny-by-default policy
+and identity MFA. Access does not replace application-level tenant mapping,
+password-change policy or session renewal without an explicitly approved SSO
+design. No production Worker secrets/configuration should be changed.
+
+**Security review before activation:** Verify atomic transactions across
+replay reservation and authentication audit/session updates, consistent UTC
+clock sources, idempotent lockouts, rate limiting on both IP and identity,
+recovery code generation/storage/revocation, concurrent device/session
+policies, password change flows, encrypted at-rest TOTP secret handling,
+tenant-specific RBAC and data residency; run negative and real browser UAT.
