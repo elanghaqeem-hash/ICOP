@@ -1,4 +1,5 @@
 import { resolveAccessIdentity } from './access-identity.mjs';
+import { stagingSessionMe } from './security/auth-me.mjs';
 
 // ICOP Cloudflare Workers Free staging API — bootstrap only.
 // NO user records, passwords, impersonation, or business-data migration.
@@ -100,6 +101,11 @@ export default {
       const identity = await resolveAccessIdentity(request, env, ctx);
       if (!identity.ok) return reply(identity.status, { code: identity.code });
       return reply(identity.status, identity.body);
+    }
+
+    if (path === '/api/v1/auth/me' && request.method === 'GET') {
+      const result=await stagingSessionMe(request,env,ctx);
+      return reply(result.status,result.body);
     }
 
     // Explicit fail-closed response. No password processing or JWTs until the
