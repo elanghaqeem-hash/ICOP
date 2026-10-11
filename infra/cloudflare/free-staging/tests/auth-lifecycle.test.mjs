@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { webcrypto } from 'node:crypto';
 import { encryptTotpSecret, newTotpSecret } from '../src/security/credentials.mjs';
 import { totpAt } from '../src/security/totp.mjs';
-import { finishTotpAndIssueSession, issueRecoveryAfterMfa, consumeRecoveryAndIssueSession, resetUserMfa } from '../src/security/auth-lifecycle.mjs';
+import { finishTotpAndIssueSession, issueRecoveryAfterMfa, consumeRecoveryAndIssueSession, resetUserMfa, revokeCurrentSession, revokeAllSessions } from '../src/security/auth-lifecycle.mjs';
 
 if(!globalThis.crypto)globalThis.crypto=webcrypto;
 const now=1800000000;
@@ -154,4 +154,45 @@ test('U01: recovery code consumed once and code replay cannot release a session 
     db:fakeDb({user:account,batchFail:true}),tenantId,userId,code,
     recoveryKey,keys,ip,now});
   assert.equal(missingSchema.ok,false);
+});
+
+
+test('U01/U24: current-device logout revokes only the matching hashed session and audits',async()=>{
+  const fake=fakeDb();
+  const token='s1_'+'ac'.repeat(32);
+  // Simulated authenticated server-side session lookup; raw token is never persisted.
+  const original=fake.prepare;
+  fake.prepare=(sql)=>{
+    const q=original(sql);
+    if(sql.includes('FROM auth_sessions s WHERE s.session_id_hash'))
+      return {bind:(...args)=>{
+        fake.calls.push({sql,args});
+        return {first:async()=>({user_id:userId,tenant_id:tenantId,revoked_at:null})};
+      }};
+    return q;
+  };
+  const result=await revokeCurrentSession({db:fake,sessionToken:token,tenantId,userId,
+    sessionKey,ip,auditKey,now});
+  assert.equal(result.ok,true);
+  const stored=JSON.stringify(fake.calls);
+  assert.ok(!stored.includes(token),'D1 must receive a token digest only');
+  assert.ok(stored.includes('auth.logout'));
+  assert.ok(!stored.includes(ip));
+  const bad=await revokeCurrentSession({
+    db:fake,sessionToken:'forged',tenantId,userId,sessionKey,ip,auditKey,now});
+  assert.equal(bad.code,'SESSION_INVALID');
+});
+test('U01/U24: logout-all rotates token_version, revokes all sessions, audits atomically',async()=>{
+  const db=fakeDb();
+  const result=await revokeAllSessions({db,tenantId,userId,ip,auditKey,now});
+  assert.equal(result.ok,true);
+  assert.equal(result.allSessionsRevoked,true);
+  assert.deepEqual(db.calls.find(c=>'batchSize'in c),{batchSize:3});
+  const sql=db.calls.map(c=>c.sql||'').join(';');
+  assert.match(sql,/token_version=token_version\+1/);
+  assert.match(sql,/auth_sessions SET revoked_at/);
+  assert.match(sql,/auth.logout_all/);
+  const failed=await revokeAllSessions({
+    db:fakeDb({batchFail:true}),tenantId,userId,ip,auditKey,now});
+  assert.equal(failed.ok,false);
 });
