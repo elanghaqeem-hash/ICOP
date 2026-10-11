@@ -45,6 +45,19 @@ async function identitySchemaPrepared(env) {
   }
 }
 
+// Check only schema readiness; NEVER infer permission to authenticate from DDL.
+async function authSecuritySchemaPrepared(env) {
+  if (!env.DB || typeof env.DB.prepare !== 'function') return false;
+  try {
+    const row = await env.DB.prepare(
+      'SELECT version FROM migration_history WHERE version = ? LIMIT 1',
+    ).bind('0003_cf_free_auth_security_foundation').first();
+    return row?.version === '0003_cf_free_auth_security_foundation';
+  } catch {
+    return false;
+  }
+}
+
 const UNAVAILABLE = { code: 'MODULE_NOT_MIGRATED', message: 'Cloudflare staging: this module is not yet available.' };
 
 export default {
@@ -60,7 +73,10 @@ export default {
         status: 'bootstrap_only',
         environment: 'staging',
         database: 'ready',
-        schema: { identity_audit_prepared: await identitySchemaPrepared(env) },
+        schema: {
+          identity_audit_prepared: await identitySchemaPrepared(env),
+          auth_security_prepared: await authSecuritySchemaPrepared(env),
+        },
         capabilities: {
           authentication: false,
           mfa: false,
