@@ -73,3 +73,11 @@ Verify Cloudflare account eligibility and Docker-based build support before depl
 
 Do not merge or enable the `ICOP_API` frontend binding until the API Worker and
 database have passed the staging gates above.
+
+## Follow-up audit (11 Oct 2026)
+
+- Updated Wrangler Container config with explicit `instance_type` and `exports` Durable Object storage declaration from current Cloudflare documentation.
+- Removed module-global Worker-secret capture from the Container class. This is **not yet a functional backend**: the next commit must inject secrets using the documented `ctx.container.start({ env: ... })` lifecycle. Do not deploy the current scaffold until this is implemented and tested. Reference: https://developers.cloudflare.com/containers/examples/env-vars-and-secrets/
+- Validate monorepo Docker build context and image path, particularly the existing API Dockerfile's relative `COPY package*.json` statements.
+- Make document storage R2-first and fail-closed. Container local storage is ephemeral.
+- No Production API URL exists yet; no secrets, DB migrations, login, or MFA are verified.
