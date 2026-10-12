@@ -106,23 +106,30 @@ export async function verifyStagingFirstFactor({ctx,db,tenantCode,password,env,i
   }
   // Password first-factor is NOT an application login. A TOTP verification and
   // replay-safe D1 session issuance must be completed before authentication.
-  if (user.force_password_change !== 0)
-    return deny('PASSWORD_CHANGE_REQUIRED');
-  if (user.mfa_enabled !== 1)
-    return deny('MFA_ENROLLMENT_REQUIRED');
+  // Every verified first-factor event is audited, including first-login
+  // password changes and MFA enrollment; neither grants a session.
+  const pending = user.force_password_change !== 0
+    ? 'PASSWORD_CHANGE_REQUIRED'
+    : user.mfa_enabled !== 1 ? 'MFA_ENROLLMENT_REQUIRED' : null;
+  const event = pending === 'PASSWORD_CHANGE_REQUIRED'
+    ? 'auth.password_verified_change_pending'
+    : pending === 'MFA_ENROLLMENT_REQUIRED'
+      ? 'auth.password_verified_enrollment_pending'
+      : 'auth.password_verified_mfa_pending';
   try {
     const result=await db.batch([
       statement(`UPDATE users SET failed_logins=0, locked_until=NULL
         WHERE tenant_id=? AND id=? AND is_active=1`,user.tenant_id,user.id),
       statement(`INSERT INTO audit_events
         (tenant_id,actor_id,action,entity_type,entity_id,ip)
-        VALUES (?,?,'auth.password_verified_mfa_pending','user',?,?)`,
-        user.tenant_id,user.id,user.id,digestIp),
+        VALUES (?,?,?,?,?,?)`,
+        user.tenant_id,user.id,event,'user',user.id,digestIp),
     ]);
     if (!Array.isArray(result) || result.length !== 2 ||
         result.some(x=>x?.success!==true || Number(x.meta?.changes)!==1))
       return deny('STAGING_DB_NOT_READY');
   } catch { return deny('STAGING_DB_NOT_READY'); }
+  if (pending) return deny(pending);
   return {ok:true,tenantId:user.tenant_id,userId:user.id,
     mfaRequired:true,sessionIssued:false};
 }
