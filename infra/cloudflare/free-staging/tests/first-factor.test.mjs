@@ -64,7 +64,7 @@ test('U01/U24: wrong password fails, locks and records pseudonymous audit',async
   assert.equal(failure.code,'STAGING_DB_NOT_READY');
 });
 test('lockout / inactive user / tenant mismatch deny without session',async()=>{
-  const lockDb=fakeD1({...locked,password_hash:hash,locked_until:'2027-01-15 00:00:00'});
+  const lockDb=fakeD1({...locked,password_hash:hash,locked_until:'2027-01-16 00:00:00'});
   assert.equal((await verifyStagingFirstFactor(args(lockDb))).code,'ACCOUNT_LOCKED');
   const inactive=fakeD1({...locked,password_hash:hash,is_active:0});
   assert.equal((await verifyStagingFirstFactor(args(inactive))).code,'INVALID_CREDENTIALS');
