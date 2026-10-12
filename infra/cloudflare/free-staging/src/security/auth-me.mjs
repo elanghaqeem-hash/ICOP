@@ -28,6 +28,9 @@ export async function stagingSessionMe(request,env,ctx) {
   if(!token)return deny(401,'SESSION_REQUIRED');
   const verified=await verifySession(env.DB,token,env.SESSION_HMAC_KEY,tenantId,'auth.me');
   if(!verified.ok)return deny(401,'SESSION_INVALID');
+  // U01: a D1 session without verified second factor is never an
+  // authenticated ICOP application session, even for optional-MFA roles.
+  if(verified.actor?.mfaVerified !== true)return deny(403,'MFA_REQUIRED');
   // Session authentication does not imply that the currently signed-in
   // Cloudflare Access identity matches the principal that owns the session.
   // Bind both factors to the same identity to prevent session sharing.
