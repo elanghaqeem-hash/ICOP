@@ -81,3 +81,11 @@ test('tenant header, secret and identity provider must be valid',async()=>{
  assert.equal(spoof.code,403);
  assert.match(await hashSessionToken(token,key),/^[a-f0-9]{64}$/);
 });
+
+test('U01: MFA-unverified optional-role D1 session must never be reported authenticated',async()=>{
+  const DB=mockDb({sessionRow:{...session,role:'auditor',mfa_enabled:0,mfa_verified:0}});
+  const response=await api(request(),{...flags,DB},ctx());
+  assert.equal(response.code,403);
+  assert.equal(response.data.code,'MFA_REQUIRED');
+  assert.equal(response.data.applicationAuthenticated,undefined);
+});
