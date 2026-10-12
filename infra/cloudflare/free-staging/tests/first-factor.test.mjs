@@ -77,6 +77,8 @@ test('U01: password accepted without enrollment or change requirement does not c
   assert.equal((await verifyStagingFirstFactor(args(change))).code,'PASSWORD_CHANGE_REQUIRED');
   const enroll=fakeD1({...locked,password_hash:hash,mfa_enabled:0});
   assert.equal((await verifyStagingFirstFactor(args(enroll))).code,'MFA_ENROLLMENT_REQUIRED');
-  assert.equal(change.calls.some(x=>x.batch),false);
-  assert.equal(enroll.calls.some(x=>x.batch),false);
+  assert.equal(change.calls.some(x=>x.batch===2),true);
+  assert.equal(enroll.calls.some(x=>x.batch===2),true);
+  assert.ok(JSON.stringify(change.calls).includes('auth.password_verified_change_pending'));
+  assert.ok(JSON.stringify(enroll.calls).includes('auth.password_verified_enrollment_pending'));
 });
