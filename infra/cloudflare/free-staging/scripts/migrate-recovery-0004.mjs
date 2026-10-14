@@ -126,7 +126,8 @@ if(mode!=='--validate-source') {
       fail('exact explicit migration authorization missing');
     const backupParent=process.env.ICOP_D1_BACKUP_DIR;
     if(!backupParent || !backupParent.startsWith('/') ||
-       resolve(backupParent).startsWith(resolve(dir,'..') + '/'))
+       resolve(backupParent)===resolve(dir,'../../..') ||
+       resolve(backupParent).startsWith(resolve(dir,'../../..') + '/'))
       fail('ICOP_D1_BACKUP_DIR must be an absolute protected path outside repository');
     if(!statSync(backupParent).isDirectory())
       fail('backup parent must exist and be a directory');
