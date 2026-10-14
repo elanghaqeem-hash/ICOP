@@ -6,12 +6,11 @@
  * complete SQL file, never splits CREATE TRIGGER statements over D1 HTTP.
  * No tenant, user, password, secret, session or role is ever created here.
  */
-import { readFileSync, mkdtempSync, statSync, rmSync } from 'node:fs';
+import { readFileSync, mkdtempSync, statSync, chmodSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { dirname, resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { tmpdir } from 'node:os';
 
 const dir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const config = JSON.parse(readFileSync(join(dir, 'wrangler.jsonc'), 'utf8'));
@@ -125,13 +124,21 @@ if(mode!=='--validate-source') {
     if(process.env.ICOP_D1_0004_APPROVED !==
         'APPLY_0004_STAGING_ONLY_'+EXPECTED_DATABASE)
       fail('exact explicit migration authorization missing');
-    const backupDir=mkdtempSync(join(tmpdir(),'icop-d1-stage-0004-'));
+    const backupParent=process.env.ICOP_D1_BACKUP_DIR;
+    if(!backupParent || !backupParent.startsWith('/') ||
+       resolve(backupParent).startsWith(resolve(dir,'..') + '/'))
+      fail('ICOP_D1_BACKUP_DIR must be an absolute protected path outside repository');
+    if(!statSync(backupParent).isDirectory())
+      fail('backup parent must exist and be a directory');
+    // Leave a protected backup on disk for an explicit, reviewed rollback.
+    // NEVER upload it to GitHub Actions artifacts or publish its contents.
+    const backupDir=mkdtempSync(join(backupParent,'icop-d1-stage-0004-'));
     const backupFile=join(backupDir,'stage-before-0004.sql');
-    // Operator MUST preserve this backup securely until rollback window ends.
-    // Backup includes schema + data and is never uploaded as a CI artifact.
+    chmodSync(backupDir,0o700);
     try {
       wrangler(['export',DBNAME,'--remote','--config','wrangler.jsonc',
         '--output',backupFile]);
+      chmodSync(backupFile,0o600);
       if (statSync(backupFile).size < 100)
         fail('backup not created; migration aborted');
       // Never use --command for trigger migration: requires native file ingest.
@@ -139,11 +146,11 @@ if(mode!=='--validate-source') {
         '--file',sqlPath]);
       const after=assertPostflight();
       console.log(JSON.stringify({remoteMigration:'PASS',...after,
-        note:'Database schema migrated; app authentication remains disabled'}));
-    } finally {
-      // Staging was verified empty before the export; nevertheless, backup is
-      // removed to avoid leaking DB data through temp folders or CI artifacts.
-      rmSync(backupDir,{recursive:true,force:true});
+        backupDir, note:'Keep offline backup for review; app login remains disabled'}));
+    } catch (error) {
+      console.error('Migration stopped: inspect remote D1 state before any retry.');
+      console.error('Preserved local backup directory: '+backupDir);
+      throw error;
     }
   }
 }
