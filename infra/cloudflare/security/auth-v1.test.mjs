@@ -144,7 +144,7 @@ test('mobile Origin-less form activates once without CSRF cookies, with verified
   assert.equal(storage.state.user?.email,email);
   assert.equal(storage.state.user?.role,'super_admin');
   assert.equal(storage.state.user?.is_active,1);
-  assert.match(storage.state.user?.password_hash,/^pbkdf2-sha256\$/);
+  assert.match(storage.state.user?.password_hash,/^pbkdf2-sha256-chain-v1\$100000x6\$/);
   const another=await handleAuthV1(formPost('/api/v1/auth/activate',
     {newPassword:password,csrf_token:token}),e,access());
   assert.equal(another.status,409,'one-time provisioning cannot create a duplicate');
