@@ -82,7 +82,7 @@ test('activate once, log in with new password, verify and revoke httpOnly sessio
   assert.equal(activated.status,200,await activated.text().catch(()=>'')); // this reads only when assertions fail
   assert.equal(storage.state.user?.email,email);
   assert.equal(storage.state.user?.is_active,1);
-  assert.match(storage.state.user.password_hash,/^pbkdf2-sha256\$600000\$/);
+  assert.match(storage.state.user.password_hash,/^pbkdf2-sha256-chain-v1\$100000x6\$/);
   assert.equal((await handleAuthV1(req('/api/v1/auth/activate','POST',{newPassword:password}),e,access())).status,409);
   const bad=await handleAuthV1(req('/api/v1/auth/login','POST',{tenant:'DEIT',email,password:'invalid'}),e,access());
   assert.equal(bad.status,401);
