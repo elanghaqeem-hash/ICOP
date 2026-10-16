@@ -189,7 +189,7 @@ export async function confirmMfaEnrollment({
         WHERE tenant_id=? AND id=? AND token_version=?
           AND is_active=1 AND force_password_change=0 AND mfa_enabled=0
           AND mfa_pending_secret_enc=?
-          AND mfa_pending_expires_at>datetime(?,'unixepoch')
+          AND unixepoch(mfa_pending_expires_at)>?
           AND EXISTS(SELECT 1 FROM auth_mfa_challenges c
             WHERE c.challenge_hash=? AND c.tenant_id=users.tenant_id
               AND c.user_id=users.id AND c.consumed_at=?)
@@ -205,7 +205,7 @@ export async function confirmMfaEnrollment({
       statements.push(statement(db,`
         INSERT INTO mfa_recovery_codes
           (tenant_id,user_id,code_hash,generation,issued_at,expires_at)
-        SELECT tenant_id,id,?,?,?,?,? FROM users
+        SELECT tenant_id,id,?,?,?,? FROM users
         WHERE tenant_id=? AND id=? AND mfa_enabled=1 AND mfa_last_step=?
           AND token_version=?
       `,hash,generation,now,now+90*86400,
