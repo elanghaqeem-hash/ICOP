@@ -117,3 +117,65 @@ test('Access diagnostic requires a runtime-verified identity even with gates clo
   assert.equal((await handleAuthV1(req('/activate'),e,{})).status,403);
   assert.equal((await handleAuthV1(req('/activate'),e,access())).status,503);
 });
+
+function formPost(path, fields, headers={}) {
+  return new Request(origin+path,{
+    method:'POST',
+    headers:{'content-type':'application/x-www-form-urlencoded',...headers},
+    body:new URLSearchParams(fields).toString()
+  });
+}
+async function issueForm(path,storage) {
+  const page=await handleAuthV1(req(path),storage,access());
+  assert.equal(page.status,200);
+  const body=await page.text();
+  const token=body.match(/name="csrf_token" value="([^"]+)"/)?.[1];
+  assert.ok(token,'signed anti-CSRF input must be in the form');
+  const cookie=page.headers.get('set-cookie');
+  assert.match(cookie,/__Host-icop-staging-csrf=/);
+  assert.match(cookie,/HttpOnly/);
+  assert.match(cookie,/Secure/);
+  assert.match(cookie,/SameSite=Strict/);
+  return {token,cookie:cookie.split(';')[0]};
+}
+test('Origin-less mobile activation form succeeds only with signed CSRF and Secure cookie',async()=>{
+  const storage=db(),e=env(storage);
+  const {token,cookie}=await issueForm('/activate',e);
+  const password='VeryUnique#2026_Administrator';
+  const ok=await handleAuthV1(formPost('/api/v1/auth/activate',
+    {newPassword:password,csrf_token:token},{cookie,'sec-fetch-site':'same-origin'}),e,access());
+  assert.equal(ok.status,200);
+  assert.equal((await ok.json()).status,'activated');
+  assert.equal(storage.state.user?.email,email);
+  assert.equal(storage.state.user?.role,'super_admin');
+  assert.equal(storage.state.user?.is_active,1);
+  assert.ok(storage.state.user?.password_hash.startsWith('pbkdf2-sha256$'));
+  const loginForm=await issueForm('/login',e);
+  const login=await handleAuthV1(formPost('/api/v1/auth/login',
+    {email,tenant:'DEIT',password,csrf_token:loginForm.token},
+    {cookie:loginForm.cookie,'sec-fetch-site':'same-origin'}),e,access());
+  assert.equal(login.status,200);
+  assert.equal((await login.json()).applicationAuthenticated,true);
+});
+test('Origin-less POST without CSRF never creates user',async()=>{
+  const storage=db(),e=env(storage);
+  const post=formPost('/api/v1/auth/activate',{newPassword:'VeryUnique#2026_Administrator'});
+  const res=await handleAuthV1(post,e,access());
+  assert.equal(res.status,403);
+  assert.equal((await res.json()).code,'ORIGIN_REQUIRED');
+  assert.equal(storage.state.user,null);
+});
+test('signed form token is bound to cookie, form action, expiry and same-site origin',async()=>{
+  const storage=db(),e=env(storage),pw='VeryUnique#2026_Administrator';
+  const {token,cookie}=await issueForm('/activate',e);
+  const run=(csrf,h={})=>handleAuthV1(formPost('/api/v1/auth/activate',{newPassword:pw,csrf_token:csrf},h),e,access());
+  assert.equal((await run(token)).status,403);
+  assert.equal((await run(token,{cookie:'__Host-icop-staging-csrf=forged'})).status,403);
+  assert.equal((await run(token+'x',{cookie})).status,403);
+  assert.equal((await run(token,{cookie,origin:'https://evil.example'})).status,403);
+  assert.equal((await run(token,{cookie,'sec-fetch-site':'cross-site'})).status,403);
+  assert.equal((await run(token,{cookie,referer:'https://evil.example/activate'})).status,403);
+  const loginToken=await issueForm('/login',e);
+  assert.equal((await run(loginToken.token,{cookie:loginToken.cookie})).status,403);
+  assert.equal(storage.state.user,null);
+});
