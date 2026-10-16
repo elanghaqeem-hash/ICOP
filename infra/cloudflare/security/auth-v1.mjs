@@ -163,10 +163,21 @@ const html = (title,body) => new Response('<!doctype html><html lang="id"><meta 
   {headers:{'content-type':'text/html; charset=utf-8','cache-control':'no-store','content-security-policy':"default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'","x-content-type-options":"nosniff","referrer-policy":"no-referrer"}});
 export async function handleAuthV1(request,env,ctx) {
   const path=new URL(request.url).pathname;
-  if (!['/activate','/login','/api/v1/auth/activate','/api/v1/auth/login','/api/v1/auth/me','/api/v1/auth/logout'].includes(path))return null;
-  if(!enabled(env))return error(503,'STAGING_AUTH_GATES_PENDING');
+  if (!['/activate','/login','/api/v1/auth/access-check','/api/v1/auth/activate','/api/v1/auth/login','/api/v1/auth/me','/api/v1/auth/logout'].includes(path))return null;
+  // Check runtime-verified Access identity BEFORE feature flags. Deny unauthenticated
+  // requests even when activation is disabled: no route should emit a readiness 503
+  // to someone Cloudflare Access did not identify.
   const email=await principal(env,ctx);
   if(!email)return error(403,'CLOUDFLARE_ACCESS_VERIFIED_IDENTITY_REQUIRED');
+  // Read-only diagnostic: no account, password or session state exposed. This must
+  // work while release gates are off to validate the Cloudflare Access integration.
+  if(path==='/api/v1/auth/access-check') {
+    if(request.method!=='GET')return error(405,'METHOD_NOT_ALLOWED');
+    return response(200,{status:'access_identity_verified',accessAuthenticated:true,
+      applicationAuthenticated:false,activationReady:enabled(env)&&env.AUTH_ACTIVATION_ENABLED==='true',
+      note:'MFA enforcement is configured in Access; real MFA UAT must be verified separately.'});
+  }
+  if(!enabled(env))return error(503,'STAGING_AUTH_GATES_PENDING');
   if(request.method==='GET'&&path==='/activate')
     return html('Aktivasi Administrator ICOP','<p>Siapkan password baru yang belum pernah digunakan. Cloudflare Access harus sudah memverifikasi email dan MFA Anda.</p><form method="post" action="/api/v1/auth/activate"><label>Password baru (minimal 16 karakter)<input type="password" name="newPassword" minlength="16" autocomplete="new-password" required></label><button>Aktifkan akun saya</button></form>');
   if(request.method==='GET'&&path==='/login')
