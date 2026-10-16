@@ -4,7 +4,8 @@
 const APPROVED_EMAIL = 'elang.haqeem@gmail.com';
 const TENANT = 'DEIT';
 const SESSION = '__Host-icop-staging-session';
-const ITERATIONS = 600000;
+const ITERATIONS = 100000;
+const KDF_ROUNDS = 6;
 const TTL = 1800;
 const te = new TextEncoder();
 const hex = x => Array.from(x, b => b.toString(16).padStart(2, '0')).join('');
@@ -98,15 +99,20 @@ function goodPassword(s) {
     /[A-Z]/.test(s) && /[a-z]/.test(s) && /[0-9]/.test(s) &&
     /[^A-Za-z0-9]/.test(s);
 }
-async function derive(pass,salt,iter=ITERATIONS) {
-  const k=await crypto.subtle.importKey('raw',te.encode(pass),'PBKDF2',false,['deriveBits']);
-  return hex(new Uint8Array(await crypto.subtle.deriveBits({
-    name:'PBKDF2',salt:unhex(salt),iterations:iter,hash:'SHA-256'
-  },k,256)));
+async function derive(pass,salt) {
+  let input=te.encode(pass);
+  const saltBytes=unhex(salt);
+  for(let round=0;round<KDF_ROUNDS;round++){
+    const roundSalt=new Uint8Array(saltBytes.length+1);
+    roundSalt.set(saltBytes);roundSalt[saltBytes.length]=round;
+    const key=await crypto.subtle.importKey('raw',input,'PBKDF2',false,['deriveBits']);
+    input=new Uint8Array(await crypto.subtle.deriveBits({name:'PBKDF2',salt:roundSalt,iterations:ITERATIONS,hash:'SHA-256'},key,256));
+  }
+  return hex(input);
 }
 async function passwordHash(pass) {
   const salt=hex(rand(16));
-  return 'pbkdf2-sha256$'+ITERATIONS+'$'+salt+'$'+await derive(pass,salt);
+  return 'pbkdf2-sha256-chain-v1$100000x6$'+salt+'$'+await derive(pass,salt);
 }
 function equalHex(a,b) {
   if(typeof a!=='string'||typeof b!=='string'||a.length!==b.length)return false;
@@ -115,7 +121,7 @@ function equalHex(a,b) {
 async function checkPassword(pass,encoded) {
   if (typeof pass!=='string'|| pass.length>256 || typeof encoded!=='string') return false;
   const p=encoded.split('$');
-  if(p.length!==4||p[0]!=='pbkdf2-sha256'||p[1]!==String(ITERATIONS)||
+  if(p.length!==4||p[0]!=='pbkdf2-sha256-chain-v1'||p[1]!=='100000x6'||
     !/^[a-f0-9]{32}$/i.test(p[2])||!/^[a-f0-9]{64}$/i.test(p[3]))return false;
   return equalHex(await derive(pass,p[2]),p[3]);
 }
