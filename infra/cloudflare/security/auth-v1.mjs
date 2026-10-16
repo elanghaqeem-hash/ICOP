@@ -80,7 +80,8 @@ async function validMutation(request,env,data,path,email) {
   // A native form always requires this signed identity/action-bound challenge,
   // even when the browser did send a matching Origin. Never accept bare forms.
   const action=path==='/api/v1/auth/activate'?'activate':
-    path==='/api/v1/auth/login'?'login':null;
+    path==='/api/v1/auth/login'?'login':
+    path==='/api/v1/auth/reset-password'?'reset-password':null;
   return action!==null&&await csrfValid(env,data,action,email);
 }
 async function bodyFrom(request) {
@@ -170,6 +171,33 @@ async function activate(env,email,data) {
     throw new Error('ACTIVATION_TRANSACTION_NOT_CONFIRMED');
   return response(200,{status:'activated',email,loginUrl:'/login'});
 }
+// This is password recovery, not account re-registration. A privileged reset is
+// permitted only after a separate administrator-requested D1 one-time reset flag
+// (force_password_change=1) and a fresh Cloudflare Access identity/MFA challenge.
+async function resetPassword(env,email,data) {
+  const db=env.DB;
+  const user=await userFor(db,email);
+  if(!user||user.role!=='super_admin'||user.is_active!==1||user.mfa_enabled!==1||
+     user.force_password_change!==1)
+    return error(409,'PASSWORD_RESET_NOT_AUTHORIZED');
+  if(!goodPassword(data?.newPassword)||data.newPassword!==data?.confirmPassword)
+    return error(400,'PASSWORD_POLICY_OR_CONFIRMATION_INVALID');
+  if(typeof db.batch!=='function')throw new Error('D1_TRANSACTION_UNAVAILABLE');
+  const hash=await passwordHash(data.newPassword);
+  // Guard against concurrent/replayed reset submissions.
+  const results=await db.batch([
+    db.prepare("UPDATE users SET password_hash=?,force_password_change=0,token_version=token_version+1,failed_logins=0,locked_until=NULL,updated_at=datetime('now') WHERE id=? AND tenant_id=? AND email_normalized=? AND role='super_admin' AND is_active=1 AND mfa_enabled=1 AND force_password_change=1 AND token_version=?")
+      .bind(hash,user.id,user.tenant_id,email,user.token_version),
+    db.prepare("INSERT INTO audit_events (tenant_id,actor_id,action,entity_type,entity_id) SELECT ?,?,?,?,? WHERE changes()=1")
+      .bind(user.tenant_id,user.id,'auth.admin_password_reset_access_mfa','user',user.id),
+    db.prepare('UPDATE auth_sessions SET revoked_at=? WHERE tenant_id=? AND user_id=? AND revoked_at IS NULL')
+      .bind(now(),user.tenant_id,user.id)
+  ]);
+  if(results?.length!==3||results[0]?.meta?.changes!==1||results[1]?.meta?.changes!==1)
+    return error(409,'PASSWORD_RESET_CONFLICT');
+  return response(200,{status:'password_reset',email,loginUrl:'/login',
+    previousSessionsRevoked:true});
+}
 async function login(env,email,data) {
   if(data?.tenant!==TENANT || typeof data?.email!=='string' ||
      data.email.trim().toLowerCase()!==email || typeof data.password!=='string')
@@ -214,7 +242,7 @@ const html = (title,body,extraHeaders={}) => new Response('<!doctype html><html 
   {headers:{'content-type':'text/html; charset=utf-8','cache-control':'no-store','content-security-policy':"default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'","x-content-type-options":"nosniff","referrer-policy":"no-referrer",...extraHeaders}});
 export async function handleAuthV1(request,env,ctx) {
   const path=new URL(request.url).pathname;
-  if (!['/activate','/login','/api/v1/auth/access-check','/api/v1/auth/activate','/api/v1/auth/login','/api/v1/auth/me','/api/v1/auth/logout'].includes(path))return null;
+  if (!['/activate','/login','/api/v1/auth/access-check','/api/v1/auth/activate','/api/v1/auth/login','/api/v1/auth/me','/api/v1/auth/logout','/reset-password','/api/v1/auth/reset-password'].includes(path))return null;
   // Check runtime-verified Access identity BEFORE feature flags. Deny unauthenticated
   // requests even when activation is disabled: no route should emit a readiness 503
   // to someone Cloudflare Access did not identify.
@@ -233,6 +261,20 @@ export async function handleAuthV1(request,env,ctx) {
     const csrf=await csrfIssue(env,'activate',email);
     return html('Aktivasi Administrator ICOP','<p>Siapkan password baru yang belum pernah digunakan. Cloudflare Access harus sudah memverifikasi email dan MFA Anda.</p><form method="post" action="/api/v1/auth/activate"><input type="hidden" name="csrf_token" value="'+csrf+'"><label>Password baru (minimal 16 karakter)<input type="password" name="newPassword" minlength="16" autocomplete="new-password" required></label><button>Aktifkan akun saya</button></form>');
   }
+  if(request.method==='GET'&&path==='/reset-password') {
+    const user=await userFor(env.DB,email);
+    if(!user||user.role!=='super_admin'||user.is_active!==1||user.mfa_enabled!==1||
+       user.force_password_change!==1)
+      return error(409,'PASSWORD_RESET_NOT_AUTHORIZED');
+    const csrf=await csrfIssue(env,'reset-password',email);
+    return html('Buat Ulang Password ICOP',
+      '<p>Identitas administrator telah diperiksa melalui Cloudflare Access. Tetapkan password baru; sesi lama akan dicabut.</p>'+
+      '<form method="post" action="/api/v1/auth/reset-password">'+
+      '<input type="hidden" name="csrf_token" value="'+csrf+'">'+
+      '<label>Password baru (16–128 karakter)<input type="password" name="newPassword" minlength="16" maxlength="128" autocomplete="new-password" required></label>'+
+      '<label>Ulangi password baru<input type="password" name="confirmPassword" minlength="16" maxlength="128" autocomplete="new-password" required></label>'+
+      '<button>Simpan password baru</button></form>');
+  }
   if(request.method==='GET'&&path==='/login') {
     const csrf=await csrfIssue(env,'login',email);
     return html('Login Administrator ICOP','<form method="post" action="/api/v1/auth/login"><input type="hidden" name="csrf_token" value="'+csrf+'"><input type="hidden" name="tenant" value="DEIT"><label>Email<input type="email" name="email" value="elang.haqeem@gmail.com" autocomplete="username" required></label><label>Password<input type="password" name="password" autocomplete="current-password" required></label><button>Masuk</button></form>');
@@ -250,6 +292,7 @@ export async function handleAuthV1(request,env,ctx) {
   try {
     if(path==='/api/v1/auth/activate'&&request.method==='POST')return await activate(env,email,data);
     if(path==='/api/v1/auth/login'&&request.method==='POST')return await login(env,email,data);
+    if(path==='/api/v1/auth/reset-password'&&request.method==='POST')return await resetPassword(env,email,data);
     if(path==='/api/v1/auth/logout'&&request.method==='POST') {
       const s=await session(env,request,email);
       if(s)await env.DB.prepare("UPDATE auth_sessions SET revoked_at=? WHERE session_id_hash=?").bind(now(),s.hash).run();
