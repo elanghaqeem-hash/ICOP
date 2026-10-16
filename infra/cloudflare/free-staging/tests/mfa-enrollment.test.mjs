@@ -16,7 +16,7 @@ const original={
   is_active:1,force_password_change:0,mfa_enabled:0,
   failed_logins:0,locked_until:null,token_version:1,
   mfa_secret_enc:null,mfa_pending_secret_enc:null,mfa_pending_expires_at:null,
-  mfa_last_step:null
+  mfa_last_step:null,mfa_failed_attempts:0,mfa_locked_until:null
 };
 const env={
   ACCESS_AUD:'synthetic-aud',AUTH_V2_ENABLED:'true',
@@ -68,6 +68,11 @@ function fakeDb(s){
         if(c.sql.includes('SET mfa_pending_secret_enc')){
           s.user.mfa_pending_secret_enc=c.values[0];
           s.user.mfa_pending_expires_at=c.values[1];
+        }
+        if(c.sql.includes('SET mfa_failed_attempts=mfa_failed_attempts+1')){
+          s.user.mfa_failed_attempts=(s.user.mfa_failed_attempts||0)+1;
+          if(s.user.mfa_failed_attempts>=5)
+            s.user.mfa_locked_until=new Date((c.values[0]+900)*1000).toISOString();
         }
         if(c.sql.includes('UPDATE auth_mfa_challenges SET consumed_at')){
           s.challenge.consumed_at=c.values[0];
@@ -230,4 +235,29 @@ test('challenge principal mismatch refuses enrollment without writing secrets',a
   assert.equal(s.user.mfa_pending_secret_enc,null);
   assert.ok(!s.history.slice(historyBefore).some(x=>x.sql.includes(
     'SET mfa_pending_secret_enc')));
+});
+
+test('incorrect OTPs are audited and a fifth failure locks MFA globally',async()=>{
+  const s=state(),db=fakeDb(s);
+  const issued=await issueMfaChallenge(issueArgs(db));
+  const started=await beginMfaEnrollment(enrollArgs(db,issued.challenge));
+  const secret=new URL(started.provisioningUri).searchParams.get('secret');
+  const valid=await totpAt(secret,Math.floor((now+3)/30));
+  const wrong=valid==='000000'?'000001':'000000';
+  for(let i=0;i<5;i++){
+    const result=await confirmMfaEnrollment({
+      ...enrollArgs(db,issued.challenge),code:wrong,now:now+3
+    });
+    assert.equal(result.code,'MFA_INVALID');
+  }
+  assert.equal(s.user.mfa_failed_attempts,5);
+  assert.equal(s.user.mfa_enabled,0);
+  assert.ok(s.user.mfa_locked_until);
+  assert.equal(s.history.filter(x=>x.sql.includes('auth.mfa_enroll_code_rejected')).length,5);
+  const denied=await confirmMfaEnrollment({
+    ...enrollArgs(db,issued.challenge),code:valid,now:now+4
+  });
+  assert.equal(denied.code,'MFA_ACCOUNT_LOCKED');
+  assert.equal(s.storedHashes.length,0);
+  assert.equal('recoveryCodes' in denied,false);
 });
