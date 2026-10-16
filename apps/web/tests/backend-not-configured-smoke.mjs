@@ -35,6 +35,13 @@ try {
   assert.equal(badOrigin.status, 403, 'origin protection must run before backend readiness');
   assert.equal((await badOrigin.json()).code, 'ORIGIN_MISMATCH');
 
+  const statusResponse = await fetch(origin + '/api/system/status');
+  assert.equal(statusResponse.status, 200);
+  const readiness = await statusResponse.json();
+  assert.equal(readiness.loginReady, false, 'a configured URL or bootstrap D1 is not app auth readiness');
+  assert.equal(readiness.readyForBusiness, false);
+  assert.equal(statusResponse.headers.get('cache-control'), 'no-store');
+
   const start = Date.now();
   const response = await post(origin);
   assert.equal(response.status, 503, 'missing backend should return 503, not a 1101/502 or auth failure');
