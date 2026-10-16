@@ -53,6 +53,9 @@ export async function GET() {
     frontend: 'UP',
     backend: configured ? 'CONFIGURED_UNVERIFIED' : 'NOT_CONFIGURED',
     stagingConnection,
+    // Until verified identity + MFA + BFF and real staging UAT, never treat a
+    // configured URL / D1 connection as permission to accept credentials.
+    loginReady: false,
     readyForBusiness: false,
     note: 'Staging bootstrap connectivity does not enable application login, MFA, CRM or production operation',
   }, { status: 200, headers: {
