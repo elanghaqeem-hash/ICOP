@@ -17,7 +17,21 @@ function req(path,method='GET',body,headers={}) {
 }
 function db() {
   const state={tenant:{id:'tenant-1',code:'DEIT'},user:null,sessions:new Map(),audit:[]};
-  return {state,prepare(sql) {
+  return {state,
+    async batch(statements) {
+      // D1 batch contract: statements are committed atomically.
+      const priorUser=state.user,priorAudit=state.audit.slice();
+      const results=[];
+      try {
+        for(const stmt of statements) results.push(await stmt.run());
+        return results;
+      } catch(err) {
+        state.user=priorUser;
+        state.audit.splice(0,state.audit.length,...priorAudit);
+        throw err;
+      }
+    },
+    prepare(sql) {
     return {bind(...values) {
       return {async first() {
         if(sql.includes('FROM tenants WHERE')) return {id:state.tenant.id};
@@ -32,21 +46,19 @@ function db() {
         }
         throw Error('unexpected first '+sql);
       },async run() {
-        if(sql.includes('INSERT OR IGNORE INTO users')) {
+        if(sql.includes('INSERT INTO users')) {
           const [id,tenant_id,email,email_normalized,full_name,password_hash,role,is_active,force_password_change,mfa_enabled]=values;
+          if(state.user)throw Error('UNIQUE constraint failed: users.tenant_id, users.email_normalized');
+          if(typeof password_hash!=='string'||password_hash.length<50)
+            throw Error('CHECK constraint failed: length(password_hash) >= 50');
           state.user={id,tenant_id,email,email_normalized,full_name,password_hash,role,
             is_active,force_password_change,mfa_enabled,token_version:0,failed_logins:0,locked_until:null};
           return {success:true,meta:{changes:1}};
         }
-        if(sql.includes('UPDATE users SET password_hash')) {
-          const [password_hash,tenant_id,mail]=values;
-          if(state.user?.tenant_id===tenant_id&&state.user?.email_normalized===mail&&state.user?.is_active===0) {
-            Object.assign(state.user,{password_hash,is_active:1,force_password_change:0,mfa_enabled:1,token_version:1});
-            return {success:true,meta:{changes:1}};
-          }
-          return {success:true,meta:{changes:0}};
+        if(sql.includes('INSERT INTO audit_events')){
+          if(state.failAudit)throw Error('INJECTED_AUDIT_FAILURE');
+          state.audit.push(values[2]);return {success:true,meta:{changes:1}};
         }
-        if(sql.includes('INSERT INTO audit_events')){state.audit.push(values[2]);return {success:true};}
         if(sql.includes('UPDATE users SET failed_logins=0')){state.user.failed_logins=0;state.user.locked_until=null;return {success:true};}
         if(sql.includes('UPDATE users SET failed_logins=?')){state.user.failed_logins=values[0];return {success:true};}
         if(sql.includes('INSERT INTO auth_sessions')) {
@@ -82,7 +94,7 @@ test('activate once, log in with new password, verify and revoke httpOnly sessio
   assert.equal(activated.status,200,await activated.text().catch(()=>'')); // this reads only when assertions fail
   assert.equal(storage.state.user?.email,email);
   assert.equal(storage.state.user?.is_active,1);
-  assert.match(storage.state.user.password_hash,/^pbkdf2-sha256\$600000\$/);
+  assert.match(storage.state.user.password_hash,/^pbkdf2-sha256-chain-v1\$100000x6\$/);
   assert.equal((await handleAuthV1(req('/api/v1/auth/activate','POST',{newPassword:password}),e,access())).status,409);
   const bad=await handleAuthV1(req('/api/v1/auth/login','POST',{tenant:'DEIT',email,password:'invalid'}),e,access());
   assert.equal(bad.status,401);
@@ -144,7 +156,7 @@ test('mobile Origin-less form activates once without CSRF cookies, with verified
   assert.equal(storage.state.user?.email,email);
   assert.equal(storage.state.user?.role,'super_admin');
   assert.equal(storage.state.user?.is_active,1);
-  assert.match(storage.state.user?.password_hash,/^pbkdf2-sha256\$/);
+  assert.match(storage.state.user?.password_hash,/^pbkdf2-sha256-chain-v1\$100000x6\$/);
   const another=await handleAuthV1(formPost('/api/v1/auth/activate',
     {newPassword:password,csrf_token:token}),e,access());
   assert.equal(another.status,409,'one-time provisioning cannot create a duplicate');
@@ -194,4 +206,23 @@ test('JSON API does not accept Origin null or absent even with Access verified',
   assert.equal((await handleAuthV1(req('/api/v1/auth/login','POST',b,{origin:'null'}),e,access())).status,403);
   const noOrigin=new Request(origin+'/api/v1/auth/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b)});
   assert.equal((await handleAuthV1(noOrigin,e,access())).status,403);
+});
+
+test('activation batch rolls back the user when D1 audit insertion fails',async()=>{
+  const store=db(),e=env(store);
+  store.state.failAudit=true;
+  const res=await handleAuthV1(req('/api/v1/auth/activate','POST',
+    {newPassword:'Unique#2026_RecoveryPass'}),e,access());
+  assert.equal(res.status,503);
+  assert.equal(store.state.user,null,'no partially activated user after failed audit');
+  assert.deepEqual(store.state.audit,[]);
+});
+test('password hash respects D1 CHECK length and no pending placeholder is stored',async()=>{
+  const store=db(),e=env(store);
+  const res=await handleAuthV1(req('/api/v1/auth/activate','POST',
+    {newPassword:'Unique#2026_RecoveryPass'}),e,access());
+  assert.equal(res.status,200);
+  assert.ok(store.state.user.password_hash.length>=50);
+  assert.match(store.state.user.password_hash,/^pbkdf2-sha256-chain-v1\$100000x6\$/);
+  assert.equal(store.state.audit.length,1);
 });

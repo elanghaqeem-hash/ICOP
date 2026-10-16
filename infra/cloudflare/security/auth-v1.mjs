@@ -4,7 +4,8 @@
 const APPROVED_EMAIL = 'elang.haqeem@gmail.com';
 const TENANT = 'DEIT';
 const SESSION = '__Host-icop-staging-session';
-const ITERATIONS = 600000;
+const ITERATIONS = 100000;
+const KDF_ROUNDS = 6;
 const TTL = 1800;
 const te = new TextEncoder();
 const hex = x => Array.from(x, b => b.toString(16).padStart(2, '0')).join('');
@@ -98,15 +99,20 @@ function goodPassword(s) {
     /[A-Z]/.test(s) && /[a-z]/.test(s) && /[0-9]/.test(s) &&
     /[^A-Za-z0-9]/.test(s);
 }
-async function derive(pass,salt,iter=ITERATIONS) {
-  const k=await crypto.subtle.importKey('raw',te.encode(pass),'PBKDF2',false,['deriveBits']);
-  return hex(new Uint8Array(await crypto.subtle.deriveBits({
-    name:'PBKDF2',salt:unhex(salt),iterations:iter,hash:'SHA-256'
-  },k,256)));
+async function derive(pass,salt) {
+  let input=te.encode(pass);
+  const saltBytes=unhex(salt);
+  for(let round=0;round<KDF_ROUNDS;round++){
+    const roundSalt=new Uint8Array(saltBytes.length+1);
+    roundSalt.set(saltBytes);roundSalt[saltBytes.length]=round;
+    const key=await crypto.subtle.importKey('raw',input,'PBKDF2',false,['deriveBits']);
+    input=new Uint8Array(await crypto.subtle.deriveBits({name:'PBKDF2',salt:roundSalt,iterations:ITERATIONS,hash:'SHA-256'},key,256));
+  }
+  return hex(input);
 }
 async function passwordHash(pass) {
   const salt=hex(rand(16));
-  return 'pbkdf2-sha256$'+ITERATIONS+'$'+salt+'$'+await derive(pass,salt);
+  return 'pbkdf2-sha256-chain-v1$100000x6$'+salt+'$'+await derive(pass,salt);
 }
 function equalHex(a,b) {
   if(typeof a!=='string'||typeof b!=='string'||a.length!==b.length)return false;
@@ -115,7 +121,7 @@ function equalHex(a,b) {
 async function checkPassword(pass,encoded) {
   if (typeof pass!=='string'|| pass.length>256 || typeof encoded!=='string') return false;
   const p=encoded.split('$');
-  if(p.length!==4||p[0]!=='pbkdf2-sha256'||p[1]!==String(ITERATIONS)||
+  if(p.length!==4||p[0]!=='pbkdf2-sha256-chain-v1'||p[1]!=='100000x6'||
     !/^[a-f0-9]{32}$/i.test(p[2])||!/^[a-f0-9]{64}$/i.test(p[3]))return false;
   return equalHex(await derive(pass,p[2]),p[3]);
 }
@@ -143,22 +149,25 @@ async function activate(env,email,data) {
   if (env.AUTH_ACTIVATION_ENABLED !== 'true') return error(503,'ACTIVATION_NOT_APPROVED');
   const pw=data?.newPassword;
   if(!goodPassword(pw))return error(400,'PASSWORD_POLICY_MIN_16_MIXED_CASE_DIGIT_SYMBOL');
-  const db=env.DB, tenant=await db.prepare('SELECT id FROM tenants WHERE code=? LIMIT 1').bind(TENANT).first();
+  const db=env.DB;
+  const tenant=await db.prepare('SELECT id FROM tenants WHERE code=? LIMIT 1').bind(TENANT).first();
   if(!tenant)return error(503,'TENANT_NOT_PROVISIONED');
-  const prior=await userFor(db,email);
-  if (prior && (prior.is_active!==0 || prior.password_hash!=='!pending-cloudflare-activation!'))
-    return error(409,'ACCOUNT_ALREADY_EXISTS_OR_REQUIRES_REVIEW');
+  if(await userFor(db,email))return error(409,'ACCOUNT_ALREADY_EXISTS_OR_REQUIRES_REVIEW');
+  // D1 requires password_hash length >= 50; never insert a short placeholder
+  // or create an active user before cryptographic derivation finishes.
   const hash=await passwordHash(pw);
-  if(!prior) {
-    await db.prepare('INSERT OR IGNORE INTO users (id,tenant_id,email,email_normalized,full_name,password_hash,role,is_active,force_password_change,mfa_enabled) VALUES (?,?,?,?,?,?,?,?,?,?)')
-      .bind(crypto.randomUUID(),tenant.id,email,email,'ICOP System Administrator','!pending-cloudflare-activation!','super_admin',0,1,0).run();
-  }
-  // Only a pending identity inserted by this flow can be activated.
-  const result=await db.prepare("UPDATE users SET password_hash=?,is_active=1,force_password_change=0,mfa_enabled=1,token_version=token_version+1,updated_at=datetime('now') WHERE tenant_id=? AND email_normalized=? AND password_hash='!pending-cloudflare-activation!' AND is_active=0")
-    .bind(hash,tenant.id,email).run();
-  if (result.meta?.changes!==1) return error(409,'ACTIVATION_CONFLICT');
-  const user=await userFor(db,email);
-  await audit(db,user,'auth.activated_via_cloudflare_access_mfa');
+  const id=crypto.randomUUID();
+  // D1 batch is transactional: rollback user creation if audit insertion fails.
+  // The email is exclusively from the verified Cloudflare Access principal.
+  if(typeof db.batch!=='function')throw new Error('D1_TRANSACTION_UNAVAILABLE');
+  const rows=await db.batch([
+    db.prepare('INSERT INTO users (id,tenant_id,email,email_normalized,full_name,password_hash,role,is_active,force_password_change,mfa_enabled) VALUES (?,?,?,?,?,?,?,?,?,?)')
+      .bind(id,tenant.id,email,email,'ICOP System Administrator',hash,'super_admin',1,0,1),
+    db.prepare('INSERT INTO audit_events (tenant_id,actor_id,action,entity_type,entity_id) VALUES (?,?,?,?,?)')
+      .bind(tenant.id,id,'auth.activated_via_cloudflare_access_mfa','user',id)
+  ]);
+  if(rows?.length!==2||rows[0]?.meta?.changes!==1||rows[1]?.meta?.changes!==1)
+    throw new Error('ACTIVATION_TRANSACTION_NOT_CONFIRMED');
   return response(200,{status:'activated',email,loginUrl:'/login'});
 }
 async function login(env,email,data) {
