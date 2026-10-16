@@ -1,0 +1,78 @@
+# ICOP staging: Cloudflare Workers Free frontend -> Access -> Tunnel -> VPS Fastify API
+# Database and API have no host-published ports. DO NOT use this for production.
+name: icop-cf-free-staging
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:?DB_USER required}
+      POSTGRES_DB: ${DB_NAME:?DB_NAME required}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD required}
+    volumes:
+      - staging_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [private]
+
+  migrate:
+    profiles: [migration]
+    build: { context: ./apps/api }
+    image: icop-api-cloudflare-free-staging
+    env_file: ./infra/staging/.env.api
+    environment:
+      DB_HOST: postgres
+      NODE_ENV: production
+    command: ["node", "dist/migrate.js"]
+    depends_on:
+      postgres: { condition: service_healthy }
+    networks: [private]
+
+  api:
+    build: { context: ./apps/api }
+    image: icop-api-cloudflare-free-staging
+    restart: unless-stopped
+    env_file: ./infra/staging/.env.api
+    environment:
+      DB_HOST: postgres
+      NODE_ENV: production
+      RUN_SEED: "false"
+      ESIGN_SANDBOX_ENABLED: "false"
+      SCHEDULER_ENABLED: "false"
+      JOB_WORKER_ENABLED: "false"
+      DOCUMENT_DIR: /app/storage/documents
+      UPLOAD_DIR: /app/storage/uploads
+    volumes:
+      - staging_storage:/app/storage
+    depends_on:
+      postgres: { condition: service_healthy }
+    expose:
+      - "3001"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
+    networks: [private]
+
+  tunnel:
+    image: cloudflare/cloudflared:latest # staging only: pin immutable digest for production
+    restart: unless-stopped
+    command: ["tunnel", "--no-autoupdate", "--loglevel", "info", "run"]
+    env_file: ./infra/staging/.env.tunnel
+    depends_on:
+      api: { condition: service_healthy }
+    networks: [private]
+
+volumes:
+  staging_pg:
+  staging_storage:
+
+networks:
+  private:
+    driver: bridge

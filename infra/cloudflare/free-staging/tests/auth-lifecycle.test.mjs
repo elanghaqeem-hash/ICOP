@@ -1,0 +1,198 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { webcrypto } from 'node:crypto';
+import { encryptTotpSecret, newTotpSecret } from '../src/security/credentials.mjs';
+import { totpAt } from '../src/security/totp.mjs';
+import { finishTotpAndIssueSession, issueRecoveryAfterMfa, consumeRecoveryAndIssueSession, resetUserMfa, revokeCurrentSession, revokeAllSessions } from '../src/security/auth-lifecycle.mjs';
+
+if(!globalThis.crypto)globalThis.crypto=webcrypto;
+const now=1800000000;
+const key='ab'.repeat(32), auditKey='bc'.repeat(32), sessionKey='cd'.repeat(32), recoveryKey='de'.repeat(32);
+const tenantId='tenant-deit',userId='staff-test';
+const ip='192.0.2.10';
+const subject={tenantId,userId,ip};
+const keys={session:sessionKey,encryption:key,audit:auditKey};
+const actor={id:'admin-1',tenantId,role:'company_admin',isActive:true,forcePasswordChange:false,mfaEnabled:true,mfaVerified:true};
+
+function fakeDb({user,target,batchFail=false,changesOverride}={}) {
+  const calls=[];
+  return {
+    calls,
+    prepare(sql) {
+      return { bind(...args) {
+        calls.push({sql,args});
+        return {
+          first:async()=>{
+            if(sql.includes('MAX(generation)'))return {maximum:0};
+            if(sql.includes('FROM users'))return sql.includes('token_version FROM users')&&target?target:user;
+            return null;
+          },
+        };
+      }};
+    },
+    async batch(commands){
+      calls.push({batchSize:commands.length});
+      if(batchFail)throw Error('synthetic D1 transaction exception');
+      return commands.map((_,idx)=>({success:true,meta:{changes:changesOverride?.[idx]??1}}));
+    },
+  };
+}
+async function totpFixture() {
+  const secret=newTotpSecret();
+  return {
+    secret,
+    encrypted:await encryptTotpSecret({secret,keyHex:key,tenantId,userId}),
+    code:await totpAt(secret,now/30),
+  };
+}
+const userBase={id:userId,tenant_id:tenantId,role:'company_admin',
+  is_active:1,force_password_change:0,mfa_enabled:1,mfa_last_step:null,
+  token_version:3};
+
+test('U01: verified TOTP creates one keyed-hash session and append-only audit in a D1 transaction',async()=>{
+  const f=await totpFixture();
+  const db=fakeDb({user:{...userBase,mfa_secret_enc:f.encrypted}});
+  const result=await finishTotpAndIssueSession({db,...subject,code:f.code,keys,now});
+  assert.equal(result.ok,true);
+  assert.match(result.sessionToken,/^s1_[a-f0-9]{64}$/);
+  assert.equal(result.expiresAt,now+28800);
+  assert.deepEqual(db.calls.find(c=>'batchSize'in c),{batchSize:4});
+  const stored=JSON.stringify(db.calls);
+  assert.ok(!stored.includes(result.sessionToken),'raw session must never be persisted');
+  assert.ok(!stored.includes(f.secret),'MFA secret must not be written in plaintext');
+  assert.ok(!stored.includes(ip),'client IP must only be keyed pseudonym');
+  assert.ok(stored.includes('hmac-sha256:'));
+});
+test('U01: no MFA means no session; same TOTP replay/transaction failure denies',async()=>{
+  const f=await totpFixture();
+  const invalid=await finishTotpAndIssueSession({
+    db:fakeDb({user:{...userBase,mfa_enabled:0,mfa_secret_enc:f.encrypted}}),
+    ...subject,code:f.code,keys,now,
+  });
+  assert.equal(invalid.code,'AUTH_NOT_ALLOWED');
+  const locked=await finishTotpAndIssueSession({
+    db:fakeDb({user:{...userBase,force_password_change:1,mfa_secret_enc:f.encrypted}}),
+    ...subject,code:f.code,keys,now,
+  });
+  assert.equal(locked.code,'AUTH_NOT_ALLOWED');
+  const reused=await finishTotpAndIssueSession({
+    db:fakeDb({user:{...userBase,mfa_last_step:now/30,mfa_secret_enc:f.encrypted}}),
+    ...subject,code:f.code,keys,now,
+  });
+  assert.equal(reused.code,'MFA_INVALID');
+  const dbFailed=await finishTotpAndIssueSession({
+    db:fakeDb({user:{...userBase,mfa_secret_enc:f.encrypted},batchFail:true}),
+    ...subject,code:f.code,keys,now,
+  });
+  assert.equal(dbFailed.ok,false);
+  const noKey=await finishTotpAndIssueSession({db:fakeDb(),...subject,code:f.code,keys:{},now});
+  assert.equal(noKey.code,'AUTH_KEYS_NOT_CONFIGURED');
+});
+test('U01: recovery generation contains exactly ten only-hash D1 inserts',async()=>{
+  const db=fakeDb({user:{is_active:1,mfa_enabled:1}});
+  const x=await issueRecoveryAfterMfa({db,tenantId,userId,
+    key:recoveryKey,ip,auditKey,now});
+  assert.equal(x.ok,true);
+  assert.equal(x.recoveryCodes.length,10);
+  assert.equal(new Set(x.recoveryCodes).size,10);
+  assert.deepEqual(db.calls.find(c=>'batchSize'in c),{batchSize:12});
+  const inserts=db.calls.filter(c=>typeof c.sql==='string'&&c.sql.startsWith('INSERT INTO mfa_recovery_codes'));
+  assert.equal(inserts.length,10);
+  assert.ok(inserts.every(c=>c.args[3]===1),'10 codes must share one issuance generation');
+  for(const code of x.recoveryCodes)assert.ok(!JSON.stringify(inserts).includes(code));
+  const failed=await issueRecoveryAfterMfa({db:fakeDb({user:{is_active:1,mfa_enabled:1},batchFail:true}),tenantId,userId,key:recoveryKey,ip,auditKey,now});
+  assert.equal(failed.ok,false);
+});
+test('U02/U24: MFA reset revokes all sessions, revokes codes and audits reason',async()=>{
+  const target={id:'target-user',tenant_id:tenantId,is_active:1,token_version:3};
+  const db=fakeDb({target});
+  const r=await resetUserMfa({db,actor,targetId:target.id,
+    reason:'Confirmed lost device by authorized admin',ip,auditKey,now});
+  assert.equal(r.ok,true);
+  assert.equal(r.sessionsRevoked,true);
+  const stmts=db.calls.map(x=>x.sql||'');
+  assert.ok(stmts.some(x=>x.includes('token_version=?')));
+  assert.ok(stmts.some(x=>x.includes('auth_sessions SET revoked_at')));
+  assert.ok(stmts.some(x=>x.includes('mfa_recovery_codes SET revoked_at')));
+  assert.ok(stmts.some(x=>x.includes('auth.mfa_reset')));
+  assert.ok(!JSON.stringify(db.calls).includes(ip));
+  const self=await resetUserMfa({db:fakeDb({target:{...target,id:actor.id}}),actor,
+    targetId:actor.id,reason:'Confirmed lost device by authorized admin',ip,auditKey,now});
+  assert.equal(self.code,'SELF_RESET_FORBIDDEN');
+  const cross=await resetUserMfa({db:fakeDb({target:{...target,tenant_id:'tenant-other'}}),
+    actor,targetId:target.id,reason:'Confirmed lost device by authorized admin',
+    ip,auditKey,now});
+  assert.equal(cross.code,'TENANT_DENIED');
+  const unauthorized=await resetUserMfa({db:fakeDb({target}),actor:{...actor,role:'customer_user'},
+    targetId:target.id,reason:'Confirmed lost device by authorized admin',ip,auditKey,now});
+  assert.equal(unauthorized.code,'PERMISSION_DENIED');
+});
+
+
+test('U01: recovery code consumed once and code replay cannot release a session token',async()=>{
+  const account={is_active:1,mfa_enabled:1,force_password_change:0,token_version:3};
+  const code='AABBCCDD-00112233-44556677-8899AABB';
+  const good=fakeDb({user:account});
+  const allowed=await consumeRecoveryAndIssueSession({
+    db:good,tenantId,userId,code,recoveryKey,keys,ip,now});
+  assert.equal(allowed.ok,true);
+  assert.match(allowed.sessionToken,/^s1_[a-f0-9]{64}$/);
+  assert.deepEqual(good.calls.find(x=>'batchSize'in x),{batchSize:3});
+  const stored=JSON.stringify(good.calls);
+  assert.ok(!stored.includes(code),'raw recovery code must not be persisted');
+  assert.ok(!stored.includes(allowed.sessionToken),'raw session token must never be stored');
+  const replay=await consumeRecoveryAndIssueSession({
+    db:fakeDb({user:account,changesOverride:{0:0}}),tenantId,userId,code,
+    recoveryKey,keys,ip,now});
+  assert.equal(replay.ok,false);
+  assert.equal('sessionToken' in replay,false);
+  const bad=await consumeRecoveryAndIssueSession({
+    db:fakeDb({user:account}),tenantId,userId,code:'bad-recovery',
+    recoveryKey,keys,ip,now});
+  assert.equal(bad.ok,false);
+  const missingSchema=await consumeRecoveryAndIssueSession({
+    db:fakeDb({user:account,batchFail:true}),tenantId,userId,code,
+    recoveryKey,keys,ip,now});
+  assert.equal(missingSchema.ok,false);
+});
+
+
+test('U01/U24: current-device logout revokes only the matching hashed session and audits',async()=>{
+  const fake=fakeDb();
+  const token='s1_'+'ac'.repeat(32);
+  // Simulated authenticated server-side session lookup; raw token is never persisted.
+  const original=fake.prepare;
+  fake.prepare=(sql)=>{
+    const q=original(sql);
+    if(sql.includes('FROM auth_sessions s WHERE s.session_id_hash'))
+      return {bind:(...args)=>{
+        fake.calls.push({sql,args});
+        return {first:async()=>({user_id:userId,tenant_id:tenantId,revoked_at:null})};
+      }};
+    return q;
+  };
+  const result=await revokeCurrentSession({db:fake,sessionToken:token,tenantId,userId,
+    sessionKey,ip,auditKey,now});
+  assert.equal(result.ok,true);
+  const stored=JSON.stringify(fake.calls);
+  assert.ok(!stored.includes(token),'D1 must receive a token digest only');
+  assert.ok(stored.includes('auth.logout'));
+  assert.ok(!stored.includes(ip));
+  const bad=await revokeCurrentSession({
+    db:fake,sessionToken:'forged',tenantId,userId,sessionKey,ip,auditKey,now});
+  assert.equal(bad.code,'SESSION_INVALID');
+});
+test('U01/U24: logout-all rotates token_version, revokes all sessions, audits atomically',async()=>{
+  const db=fakeDb();
+  const result=await revokeAllSessions({db,tenantId,userId,ip,auditKey,now});
+  assert.equal(result.ok,true);
+  assert.equal(result.allSessionsRevoked,true);
+  assert.deepEqual(db.calls.find(c=>'batchSize'in c),{batchSize:3});
+  const sql=db.calls.map(c=>c.sql||'').join(';');
+  assert.match(sql,/token_version=token_version\+1/);
+  assert.match(sql,/auth_sessions SET revoked_at/);
+  assert.match(sql,/auth.logout_all/);
+  const failed=await revokeAllSessions({
+    db:fakeDb({batchFail:true}),tenantId,userId,ip,auditKey,now});
+  assert.equal(failed.ok,false);
+});
