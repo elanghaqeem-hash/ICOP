@@ -175,7 +175,7 @@ test('signed forms deny cross-site Origin, Fetch Metadata, Referer, tampering, w
     formPost('/api/v1/auth/activate',{newPassword:pw,csrf_token:csrf},headers),e,access()
   );
   assert.equal((await submit('')).status,403);
-  assert.equal((await submit(token.slice(0,-1)+'f')).status,403);
+  assert.equal((await submit(token.slice(0,-1)+(token.endsWith('f')?'e':'f'))).status,403);
   assert.equal((await submit(token,{origin:'https://evil.example'})).status,403);
   assert.equal((await submit(token,{'sec-fetch-site':'cross-site'})).status,403);
   assert.equal((await submit(token,{referer:'https://evil.example/form'})).status,403);
