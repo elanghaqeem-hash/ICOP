@@ -20,7 +20,8 @@ function db() {
   return {state,
     async batch(statements) {
       // D1 batch contract: statements are committed atomically.
-      const priorUser=state.user,priorAudit=state.audit.slice();
+      const priorUser=state.user?{...state.user}:null,priorAudit=state.audit.slice();
+      const priorSessions=new Map(Array.from(state.sessions,([k,v])=>[k,{...v}]));
       const results=[];
       try {
         for(const stmt of statements) results.push(await stmt.run());
@@ -28,6 +29,7 @@ function db() {
       } catch(err) {
         state.user=priorUser;
         state.audit.splice(0,state.audit.length,...priorAudit);
+        state.sessions=priorSessions;
         throw err;
       }
     },
@@ -55,9 +57,17 @@ function db() {
             is_active,force_password_change,mfa_enabled,token_version:0,failed_logins:0,locked_until:null};
           return {success:true,meta:{changes:1}};
         }
+        if(sql.includes('UPDATE users SET password_hash=')) {
+          const [password_hash,user_id,tenant_id,mail,version]=values;
+          if(state.user?.id!==user_id||state.user?.tenant_id!==tenant_id||state.user?.email_normalized!==mail||state.user?.token_version!==version||state.user?.force_password_change!==1){state.lastChanges=0;return {success:true,meta:{changes:0}};}
+          Object.assign(state.user,{password_hash,force_password_change:0,token_version:version+1,failed_logins:0,locked_until:null});
+          state.lastChanges=1;
+          return {success:true,meta:{changes:1}};
+        }
         if(sql.includes('INSERT INTO audit_events')){
           if(state.failAudit)throw Error('INJECTED_AUDIT_FAILURE');
-          state.audit.push(values[2]);return {success:true,meta:{changes:1}};
+          if(sql.includes('WHERE changes()=1')&&state.lastChanges!==1) {state.lastChanges=0;return {success:true,meta:{changes:0}};}
+          state.audit.push(values[2]);state.lastChanges=1;return {success:true,meta:{changes:1}};
         }
         if(sql.includes('UPDATE users SET failed_logins=0')){state.user.failed_logins=0;state.user.locked_until=null;return {success:true};}
         if(sql.includes('UPDATE users SET failed_logins=?')){state.user.failed_logins=values[0];return {success:true};}
@@ -67,7 +77,14 @@ function db() {
             issued_at,expires_at,revoked_at:null});return {success:true};
         }
         if(sql.includes('UPDATE auth_sessions SET revoked_at')) {
-          const s=state.sessions.get(values[1]);if(s)s.revoked_at=values[0];return {success:true};
+          if(sql.includes('tenant_id=?')){
+            let changes=0;
+            for(const session of state.sessions.values()){
+              if(session.tenant_id===values[1]&&session.user_id===values[2]&&session.revoked_at===null){session.revoked_at=values[0];changes++;}
+            }
+            return {success:true,meta:{changes}};
+          }
+          const item=state.sessions.get(values[1]);if(item)item.revoked_at=values[0];return {success:true};
         }
         throw Error('unexpected run '+sql);
       }};
@@ -225,4 +242,62 @@ test('password hash respects D1 CHECK length and no pending placeholder is store
   assert.ok(store.state.user.password_hash.length>=50);
   assert.match(store.state.user.password_hash,/^pbkdf2-sha256-chain-v1\$100000x6\$/);
   assert.equal(store.state.audit.length,1);
+});
+
+test('existing super-admin password reset is one-time and revokes old sessions', async()=>{
+  const storage=db(),e=env(storage),oldPass='OldPassword#2026_Retire',nextPass='FreshPassword#2026_Change';
+  const activated=await handleAuthV1(req('/api/v1/auth/activate','POST',{newPassword:oldPass}),e,access());
+  assert.equal(activated.status,200);
+  const oldLogin=await handleAuthV1(req('/api/v1/auth/login','POST',{tenant:'DEIT',email,password:oldPass}),e,access());
+  assert.equal(oldLogin.status,200);
+  const oldCookie=oldLogin.headers.get('set-cookie').split(';')[0];
+  const id=storage.state.user.id, priorVersion=storage.state.user.token_version;
+  assert.equal((await handleAuthV1(req('/reset-password'),e,access())).status,409);
+  storage.state.user.force_password_change=1;
+  const token=await issueForm('/reset-password',e);
+  const reset=await handleAuthV1(formPost('/api/v1/auth/reset-password',{
+    csrf_token:token,newPassword:nextPass,confirmPassword:nextPass
+  },{origin:'null'}),e,access());
+  assert.equal(reset.status,200,await reset.clone().text());
+  assert.equal((await reset.json()).status,'password_reset');
+  assert.equal(storage.state.user.id,id);
+  assert.equal(storage.state.user.force_password_change,0);
+  assert.equal(storage.state.user.token_version,priorVersion+1);
+  assert.equal(storage.state.audit.at(-1),'auth.admin_password_reset_access_mfa');
+  assert.ok(Array.from(storage.state.sessions.values()).every(x=>x.revoked_at!==null));
+  assert.equal((await handleAuthV1(req('/api/v1/auth/me','GET',null,{cookie:oldCookie}),e,access())).status,401);
+  assert.equal((await handleAuthV1(req('/api/v1/auth/login','POST',{tenant:'DEIT',email,password:oldPass}),e,access())).status,401);
+  assert.equal((await handleAuthV1(req('/api/v1/auth/login','POST',{tenant:'DEIT',email,password:nextPass}),e,access())).status,200);
+  assert.equal((await handleAuthV1(req('/reset-password'),e,access())).status,409);
+});
+test('reset refuses mismatched password, wrong Access identity or forged CSRF',async()=>{
+  const storage=db(),e=env(storage),pw='OldValidPassword#2026';
+  assert.equal((await handleAuthV1(req('/api/v1/auth/activate','POST',{newPassword:pw}),e,access())).status,200);
+  storage.state.user.force_password_change=1;
+  const token=await issueForm('/reset-password',e);
+  const mismatch=formPost('/api/v1/auth/reset-password',{csrf_token:token,newPassword:'NewValidPassword#2026',confirmPassword:'Mismatch#2026_Wrong'});
+  assert.equal((await handleAuthV1(mismatch,e,access())).status,400);
+  assert.equal((await handleAuthV1(formPost('/api/v1/auth/reset-password',{
+    csrf_token:token,newPassword:'NewValidPassword#2026',confirmPassword:'NewValidPassword#2026'
+  }),e,access('unauthorized@example.com'))).status,403);
+  assert.equal((await handleAuthV1(formPost('/api/v1/auth/reset-password',{
+    csrf_token:'tampered',newPassword:'NewValidPassword#2026',confirmPassword:'NewValidPassword#2026'
+  }),e,access())).status,403);
+  assert.equal(storage.state.user.force_password_change,1);
+});
+test('D1 error during reset audit rolls back password update',async()=>{
+  const storage=db(),e=env(storage),oldPass='OriginalPassword#2026';
+  assert.equal((await handleAuthV1(req('/api/v1/auth/activate','POST',{newPassword:oldPass}),e,access())).status,200);
+  storage.state.user.force_password_change=1;
+  const oldHash=storage.state.user.password_hash;
+  const oldVersion=storage.state.user.token_version;
+  storage.state.failAudit=true;
+  const token=await issueForm('/reset-password',e);
+  const r=await handleAuthV1(formPost('/api/v1/auth/reset-password',{
+    csrf_token:token,newPassword:'NewPassword#2026_Changed',confirmPassword:'NewPassword#2026_Changed'
+  }),e,access());
+  assert.equal(r.status,503);
+  assert.equal(storage.state.user.password_hash,oldHash);
+  assert.equal(storage.state.user.token_version,oldVersion);
+  assert.equal(storage.state.user.force_password_change,1);
 });
