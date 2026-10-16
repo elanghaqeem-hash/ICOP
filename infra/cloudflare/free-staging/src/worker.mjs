@@ -1,5 +1,6 @@
 import { resolveAccessIdentity } from './access-identity.mjs';
 import { stagingSessionMe } from './security/auth-me.mjs';
+import { changeInitialPassword } from './security/password-change.mjs';
 
 // ICOP Cloudflare Workers Free staging API — bootstrap only.
 // NO user records, passwords, impersonation, or business-data migration.
@@ -106,6 +107,70 @@ export default {
     if (path === '/api/v1/auth/me' && request.method === 'GET') {
       const result=await stagingSessionMe(request,env,ctx);
       return reply(result.status,result.body);
+    }
+
+
+    // U01 staged initial-password-change. This is not /auth/login and MUST
+    // remain unavailable until separate Access MFA, identity, first-factor
+    // and password-change release gates are explicitly approved. Never
+    // mint a session or accept an account/role from request JSON.
+    if (path === '/api/v1/auth/initial-password-change') {
+      if (request.method !== 'POST') return reply(405, {code:'METHOD_NOT_ALLOWED'});
+      if (env?.AUTH_V2_ENABLED !== 'true' ||
+          env?.ACCESS_IDENTITY_ENABLED !== 'true' ||
+          env?.ACCESS_MFA_CONFIRMED !== 'true' ||
+          env?.PASSWORD_FIRST_FACTOR_ENABLED !== 'true' ||
+          env?.PASSWORD_CHANGE_ENABLED !== 'true')
+        return reply(503, {code:'STAGING_AUTH_NOT_READY'});
+      // Explicit same-origin anti-CSRF barrier for Access-cookie browsers.
+      // CORS is not enabled. Keep this route staging-origin-only until a
+      // separate reviewed frontend CSRF contract is available.
+      if (request.headers.get('origin') !== url.origin ||
+          (request.headers.get('sec-fetch-site') &&
+           request.headers.get('sec-fetch-site') !== 'same-origin'))
+        return reply(403, {code:'ORIGIN_DENIED'});
+      if (!ctx?.access || ctx.access.aud !== env.ACCESS_AUD ||
+          typeof ctx.access.getIdentity !== 'function')
+        return reply(403, {code:'ACCESS_REQUIRED'});
+      if (!/^application\\/json(?:\\s*;|$)/i.test(request.headers.get('content-type')||''))
+        return reply(415, {code:'JSON_REQUIRED'});
+      const length = Number(request.headers.get('content-length')||0);
+      if (!Number.isFinite(length) || length>4096)
+        return reply(413, {code:'REQUEST_TOO_LARGE'});
+      let data;
+      try {
+        const raw = await request.text();
+        if (new TextEncoder().encode(raw).length>4096)
+          return reply(413, {code:'REQUEST_TOO_LARGE'});
+        data=JSON.parse(raw);
+      } catch {return reply(400, {code:'INVALID_JSON'});}
+      if (!data || Array.isArray(data) || typeof data!=='object' ||
+          typeof data.tenantCode!=='string' ||
+          typeof data.currentPassword!=='string' ||
+          typeof data.newPassword!=='string')
+        return reply(400, {code:'AUTH_INVALID'});
+      try {
+        const outcome=await changeInitialPassword({
+          ctx,db:env.DB,env,tenantCode:data.tenantCode,
+          currentPassword:data.currentPassword,
+          newPassword:data.newPassword,
+          ip:request.headers.get('cf-connecting-ip')
+        });
+        if (outcome.ok) return reply(202, {
+          status:'password_changed_mfa_enrollment_pending',
+          applicationAuthenticated:false,
+          mfaEnrollmentRequired:true,
+          sessionIssued:false
+        });
+        const code=outcome.code||'STAGING_AUTH_NOT_READY';
+        const status=code==='STAGING_AUTH_NOT_READY' || code==='STAGING_DB_NOT_READY' ||
+          code==='STAGING_AUDIT_NOT_CONFIGURED'?503:
+          code==='ACCESS_REQUIRED'?403:
+          code==='PASSWORD_POLICY'?422:
+          code==='PASSWORD_CHANGE_CONFLICT'?409:
+          code==='AUTH_INVALID'?400:401;
+        return reply(status,{code});
+      } catch {return reply(503,{code:'STAGING_AUTH_NOT_READY'});}
     }
 
     // Explicit fail-closed response. No password processing or JWTs until the
