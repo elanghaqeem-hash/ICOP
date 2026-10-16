@@ -40,11 +40,19 @@ async function auditIp(ip,keyHex) {
   return 'hmac-sha256:'+Array.from(new Uint8Array(signed),
     x=>x.toString(16).padStart(2,'0')).join('');
 }
+function lockUntil(value) {
+  if(value===null||value===undefined||value==='')return 0;
+  if(typeof value!=='string')return Infinity;
+  const iso=/^\\d{4}-\\d\\d-\\d\\d \\d\\d:\\d\\d:\\d\\d$/.test(value)
+    ? value.replace(' ','T')+'Z' : value;
+  const ms=Date.parse(iso);
+  return Number.isFinite(ms)?ms:Infinity;
+}
 async function pendingUser(db,proof) {
   return statement(db,`
     SELECT id,tenant_id,email_normalized,is_active,force_password_change,
       mfa_enabled,mfa_secret_enc,mfa_pending_secret_enc,mfa_pending_expires_at,
-      mfa_last_step,token_version
+      mfa_last_step,mfa_failed_attempts,mfa_locked_until,token_version
     FROM users WHERE tenant_id=? AND id=? LIMIT 1
   `,proof.tenantId,proof.userId).first();
 }
@@ -146,12 +154,40 @@ export async function confirmMfaEnrollment({
       tenantId:proof.tenantId,userId:proof.userId
     });
   }catch{return deny('MFA_ENROLLMENT_INVALID');}
-  let step;
+  if(lockUntil(user.mfa_locked_until)>now*1000)
+    return deny('MFA_ACCOUNT_LOCKED');
+  let step=null;
   try {step=await matchTotp(secret,code,-1,now*1000);}
-  catch{return deny('MFA_INVALID');}
-  if(step===null)return deny('MFA_INVALID');
+  catch {step=null;}
   const ipHash=await auditIp(ip,env.ACCESS_AUDIT_HMAC_KEY);
   if(!ipHash)return deny('STAGING_AUDIT_NOT_CONFIGURED');
+  if(step===null) {
+    // Global to the tenant/user, not each challenge. Password is not logged.
+    try {
+      const failures=await db.batch([
+        statement(db,`
+          UPDATE users SET mfa_failed_attempts=mfa_failed_attempts+1,
+            mfa_locked_until=CASE WHEN mfa_failed_attempts+1>=5
+              THEN datetime(?,'unixepoch','+15 minutes')
+              ELSE mfa_locked_until END
+          WHERE tenant_id=? AND id=? AND is_active=1 AND mfa_enabled=0
+            AND token_version=? AND mfa_pending_secret_enc=?
+            AND (mfa_locked_until IS NULL OR unixepoch(mfa_locked_until)<=?)
+        `,now,proof.tenantId,proof.userId,proof.tokenVersion,
+          user.mfa_pending_secret_enc,now),
+        statement(db,`
+          INSERT INTO audit_events(tenant_id,actor_id,action,entity_type,entity_id,ip)
+          SELECT tenant_id,id,'auth.mfa_enroll_code_rejected','user',id,?
+          FROM users WHERE tenant_id=? AND id=?
+            AND mfa_pending_secret_enc=? AND mfa_enabled=0
+        `,ipHash,proof.tenantId,proof.userId,user.mfa_pending_secret_enc)
+      ]);
+      if(!goodBatch(failures,2)||
+         failures.some(x=>Number(x.meta.changes)!==1))
+        return deny('STAGING_DB_NOT_READY');
+    }catch{return deny('STAGING_DB_NOT_READY');}
+    return deny('MFA_INVALID');
+  }
   let codes,hashes,generation;
   try {
     ({codes,hashes}=await createRecoveryCodes({
@@ -190,11 +226,12 @@ export async function confirmMfaEnrollment({
           AND is_active=1 AND force_password_change=0 AND mfa_enabled=0
           AND mfa_pending_secret_enc=?
           AND unixepoch(mfa_pending_expires_at)>?
+          AND (mfa_locked_until IS NULL OR unixepoch(mfa_locked_until)<=?)
           AND EXISTS(SELECT 1 FROM auth_mfa_challenges c
             WHERE c.challenge_hash=? AND c.tenant_id=users.tenant_id
               AND c.user_id=users.id AND c.consumed_at=?)
       `,step,now,afterVersion,...scoped,proof.tokenVersion,
-         user.mfa_pending_secret_enc,now,proof.challengeHash,now),
+         user.mfa_pending_secret_enc,now,now,proof.challengeHash,now),
       statement(db,`
         INSERT INTO mfa_used_steps(tenant_id,user_id,totp_step,used_at)
         SELECT tenant_id,id,?,? FROM users WHERE tenant_id=? AND id=?
