@@ -36,52 +36,51 @@ async function principal(env, ctx) {
     return email === APPROVED_EMAIL ? email : null;
   } catch { return null; }
 }
-// Browsers with strict privacy controls may omit Origin on ordinary HTML form posts.
-// Keep exact-Origin enforcement when it exists; require a signed 10-minute CSRF token
-// bound to a Secure __Host cookie and to the action if the Origin header is absent.
-const CSRF_COOKIE = '__Host-icop-staging-csrf';
+// Cloudflare Access verifies the administrator first. Independently signed anti-CSRF
+// tokens protect native HTML forms even if an in-app/mobile browser strips Origin
+// or SameSite cookies during the Access redirect. No client-supplied identity is trusted.
+// The HMAC is bound to the runtime-verified administrator, action and 10-minute age.
 const CSRF_TTL = 600;
-async function csrfSign(env, payload) {
-  const key = await crypto.subtle.importKey('raw', unhex(env.SESSION_HMAC_KEY), {name:'HMAC',hash:'SHA-256'}, false, ['sign']);
+async function csrfSign(env,payload) {
+  const key=await crypto.subtle.importKey('raw',unhex(env.SESSION_HMAC_KEY),
+    {name:'HMAC',hash:'SHA-256'},false,['sign']);
   return hex(new Uint8Array(await crypto.subtle.sign('HMAC',key,te.encode('icop-csrf:'+payload))));
 }
-function namedCookie(request,name) {
-  const c=request.headers.get('cookie')||'';
-  const pair=c.split(';').map(x=>x.trim()).find(x=>x.startsWith(name+'='));
-  return pair?pair.slice(name.length+1):null;
+async function csrfIssue(env,action,verifiedEmail) {
+  const raw='v2.'+now()+'.'+hex(rand(24));
+  return raw+'.'+await csrfSign(env,verifiedEmail+':'+action+':'+raw);
 }
-async function csrfIssue(env,action) {
-  const raw='v1.'+now()+'.'+hex(rand(16));
-  const token=raw+'.'+await csrfSign(env,action+':'+raw);
-  return {token, cookie:CSRF_COOKIE+'='+token+'; Path=/; Max-Age='+CSRF_TTL+'; Secure; HttpOnly; SameSite=Strict'};
-}
-async function csrfValid(request,env,data,action) {
+async function csrfValid(env,data,action,verifiedEmail) {
   const token=data?.csrf_token;
-  if(typeof token!=='string'||!/^v1\.[0-9]{10}\.[a-f0-9]{32}\.[a-f0-9]{64}$/.test(token))return false;
-  const cookie=namedCookie(request,CSRF_COOKIE);
-  if(typeof cookie!=='string'||!equalHex(cookie,token))return false;
+  if(typeof token!=='string'||!/^v2\.[0-9]{10}\.[a-f0-9]{48}\.[a-f0-9]{64}$/.test(token))return false;
   const [version,seconds,nonce,mac]=token.split('.');
-  const ts=Number(seconds);
-  if(!Number.isSafeInteger(ts)||ts>now()+30||now()-ts>CSRF_TTL)return false;
-  const expected=await csrfSign(env,action+':'+version+'.'+seconds+'.'+nonce);
+  const ts=Number(seconds),current=now();
+  if(!Number.isSafeInteger(ts)||ts>current+30||current-ts>CSRF_TTL)return false;
+  const expected=await csrfSign(env,verifiedEmail+':'+action+':'+version+'.'+seconds+'.'+nonce);
   return equalHex(mac,expected);
 }
-async function validMutation(request,env,data,path) {
+async function validMutation(request,env,data,path,email) {
   const site=request.headers.get('sec-fetch-site');
   if(site==='cross-site')return false;
   const origin=request.headers.get('origin');
-  if(origin!==null)return origin===new URL(request.url).origin;
-  // Origin-less JSON requests remain blocked. The fallback is exclusively for
-  // browser form submissions with a signed hidden field and __Host cookie.
-  const type=request.headers.get('content-type')||'';
+  const expectedOrigin=new URL(request.url).origin;
+  // Explicit external origins are forbidden, even if they possess a token.
+  // "null" is the opaque origin sent by certain privacy-oriented mobile webviews.
+  if(origin!==null&&origin!=='null'&&origin!==expectedOrigin)return false;
+  const type=(request.headers.get('content-type')||'').toLowerCase();
+  // Existing JSON API clients must prove an exact same-origin Origin.
+  if(type.startsWith('application/json'))return origin===expectedOrigin;
   if(!type.startsWith('application/x-www-form-urlencoded'))return false;
   const ref=request.headers.get('referer');
   if(ref!==null) {
-    try {if(new URL(ref).origin!==new URL(request.url).origin)return false;}
+    try {if(new URL(ref).origin!==expectedOrigin)return false;}
     catch {return false;}
   }
-  const action=path==='/api/v1/auth/activate'?'activate':path==='/api/v1/auth/login'?'login':null;
-  return action!==null && await csrfValid(request,env,data,action);
+  // A native form always requires this signed identity/action-bound challenge,
+  // even when the browser did send a matching Origin. Never accept bare forms.
+  const action=path==='/api/v1/auth/activate'?'activate':
+    path==='/api/v1/auth/login'?'login':null;
+  return action!==null&&await csrfValid(env,data,action,email);
 }
 async function bodyFrom(request) {
   if (Number(request.headers.get('content-length') || 0) > 8192) return null;
@@ -222,12 +221,12 @@ export async function handleAuthV1(request,env,ctx) {
   }
   if(!enabled(env))return error(503,'STAGING_AUTH_GATES_PENDING');
   if(request.method==='GET'&&path==='/activate') {
-    const csrf=await csrfIssue(env,'activate');
-    return html('Aktivasi Administrator ICOP','<p>Siapkan password baru yang belum pernah digunakan. Cloudflare Access harus sudah memverifikasi email dan MFA Anda.</p><form method="post" action="/api/v1/auth/activate"><input type="hidden" name="csrf_token" value="'+csrf.token+'"><label>Password baru (minimal 16 karakter)<input type="password" name="newPassword" minlength="16" autocomplete="new-password" required></label><button>Aktifkan akun saya</button></form>',{'set-cookie':csrf.cookie});
+    const csrf=await csrfIssue(env,'activate',email);
+    return html('Aktivasi Administrator ICOP','<p>Siapkan password baru yang belum pernah digunakan. Cloudflare Access harus sudah memverifikasi email dan MFA Anda.</p><form method="post" action="/api/v1/auth/activate"><input type="hidden" name="csrf_token" value="'+csrf+'"><label>Password baru (minimal 16 karakter)<input type="password" name="newPassword" minlength="16" autocomplete="new-password" required></label><button>Aktifkan akun saya</button></form>');
   }
   if(request.method==='GET'&&path==='/login') {
-    const csrf=await csrfIssue(env,'login');
-    return html('Login Administrator ICOP','<form method="post" action="/api/v1/auth/login"><input type="hidden" name="csrf_token" value="'+csrf.token+'"><input type="hidden" name="tenant" value="DEIT"><label>Email<input type="email" name="email" value="elang.haqeem@gmail.com" autocomplete="username" required></label><label>Password<input type="password" name="password" autocomplete="current-password" required></label><button>Masuk</button></form>',{'set-cookie':csrf.cookie});
+    const csrf=await csrfIssue(env,'login',email);
+    return html('Login Administrator ICOP','<form method="post" action="/api/v1/auth/login"><input type="hidden" name="csrf_token" value="'+csrf+'"><input type="hidden" name="tenant" value="DEIT"><label>Email<input type="email" name="email" value="elang.haqeem@gmail.com" autocomplete="username" required></label><label>Password<input type="password" name="password" autocomplete="current-password" required></label><button>Masuk</button></form>');
   }
   if(request.method==='GET'&&path==='/api/v1/auth/me') {
     const s=await session(env,request,email);
@@ -235,12 +234,9 @@ export async function handleAuthV1(request,env,ctx) {
     return response(200,{applicationAuthenticated:true,mfaVerified:true,
       user:{id:s.record.user_id,email:s.record.email,role:s.record.role,tenantId:s.record.tenant_id}});
   }
-  // An explicit mismatched Origin is always denied, including with a valid CSRF token.
-  if(request.method==='POST'&&request.headers.has('origin')&&request.headers.get('origin')!==new URL(request.url).origin)
-    return error(403,'ORIGIN_REQUIRED');
   const data=request.method==='POST'?await bodyFrom(request):null;
   if(request.method==='POST'&&!data)return error(400,'BAD_REQUEST');
-  if(request.method==='POST'&&!(await validMutation(request,env,data,path)))
+  if(request.method==='POST'&&!(await validMutation(request,env,data,path,email)))
     return error(403,'ORIGIN_REQUIRED');
   try {
     if(path==='/api/v1/auth/activate'&&request.method==='POST')return await activate(env,email,data);
