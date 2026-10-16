@@ -36,9 +36,52 @@ async function principal(env, ctx) {
     return email === APPROVED_EMAIL ? email : null;
   } catch { return null; }
 }
-function sameOrigin(request) {
-  const actual = request.headers.get('origin');
-  return actual !== null && actual === new URL(request.url).origin;
+// Browsers with strict privacy controls may omit Origin on ordinary HTML form posts.
+// Keep exact-Origin enforcement when it exists; require a signed 10-minute CSRF token
+// bound to a Secure __Host cookie and to the action if the Origin header is absent.
+const CSRF_COOKIE = '__Host-icop-staging-csrf';
+const CSRF_TTL = 600;
+async function csrfSign(env, payload) {
+  const key = await crypto.subtle.importKey('raw', unhex(env.SESSION_HMAC_KEY), {name:'HMAC',hash:'SHA-256'}, false, ['sign']);
+  return hex(new Uint8Array(await crypto.subtle.sign('HMAC',key,te.encode('icop-csrf:'+payload))));
+}
+function namedCookie(request,name) {
+  const c=request.headers.get('cookie')||'';
+  const pair=c.split(';').map(x=>x.trim()).find(x=>x.startsWith(name+'='));
+  return pair?pair.slice(name.length+1):null;
+}
+async function csrfIssue(env,action) {
+  const raw='v1.'+now()+'.'+hex(rand(16));
+  const token=raw+'.'+await csrfSign(env,action+':'+raw);
+  return {token, cookie:CSRF_COOKIE+'='+token+'; Path=/; Max-Age='+CSRF_TTL+'; Secure; HttpOnly; SameSite=Strict'};
+}
+async function csrfValid(request,env,data,action) {
+  const token=data?.csrf_token;
+  if(typeof token!=='string'||!/^v1\.[0-9]{10}\.[a-f0-9]{32}\.[a-f0-9]{64}$/.test(token))return false;
+  const cookie=namedCookie(request,CSRF_COOKIE);
+  if(typeof cookie!=='string'||!equalHex(cookie,token))return false;
+  const [version,seconds,nonce,mac]=token.split('.');
+  const ts=Number(seconds);
+  if(!Number.isSafeInteger(ts)||ts>now()+30||now()-ts>CSRF_TTL)return false;
+  const expected=await csrfSign(env,action+':'+version+'.'+seconds+'.'+nonce);
+  return equalHex(mac,expected);
+}
+async function validMutation(request,env,data,path) {
+  const site=request.headers.get('sec-fetch-site');
+  if(site==='cross-site')return false;
+  const origin=request.headers.get('origin');
+  if(origin!==null)return origin===new URL(request.url).origin;
+  // Origin-less JSON requests remain blocked. The fallback is exclusively for
+  // browser form submissions with a signed hidden field and __Host cookie.
+  const type=request.headers.get('content-type')||'';
+  if(!type.startsWith('application/x-www-form-urlencoded'))return false;
+  const ref=request.headers.get('referer');
+  if(ref!==null) {
+    try {if(new URL(ref).origin!==new URL(request.url).origin)return false;}
+    catch {return false;}
+  }
+  const action=path==='/api/v1/auth/activate'?'activate':path==='/api/v1/auth/login'?'login':null;
+  return action!==null && await csrfValid(request,env,data,action);
 }
 async function bodyFrom(request) {
   if (Number(request.headers.get('content-length') || 0) > 8192) return null;
@@ -159,8 +202,8 @@ async function session(env,request,email) {
      record.issued_at>now()||record.expires_at<=now())return null;
   return {record,hash};
 }
-const html = (title,body) => new Response('<!doctype html><html lang="id"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>'+title+'</title><style>body{font:16px system-ui;background:#f2f5fa;color:#1d2c48;padding:2rem;max-width:32rem;margin:auto}main{background:white;border-radius:18px;padding:2rem;box-shadow:0 10px 35px #142a501a}label{display:block;margin:1rem 0}input{box-sizing:border-box;width:100%;font:inherit;padding:.8rem;border:1px solid #ccd4e2;border-radius:9px}button{background:#284979;color:white;border:0;border-radius:9px;padding:1rem;width:100%;font:inherit}small{color:#687789}</style><main><h1>'+title+'</h1>'+body+'<p><small>Akses melalui Cloudflare Access dan MFA diwajibkan. Jangan gunakan password yang pernah muncul dalam screenshot.</small></p></main></html>',
-  {headers:{'content-type':'text/html; charset=utf-8','cache-control':'no-store','content-security-policy':"default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'","x-content-type-options":"nosniff","referrer-policy":"no-referrer"}});
+const html = (title,body,extraHeaders={}) => new Response('<!doctype html><html lang="id"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>'+title+'</title><style>body{font:16px system-ui;background:#f2f5fa;color:#1d2c48;padding:2rem;max-width:32rem;margin:auto}main{background:white;border-radius:18px;padding:2rem;box-shadow:0 10px 35px #142a501a}label{display:block;margin:1rem 0}input{box-sizing:border-box;width:100%;font:inherit;padding:.8rem;border:1px solid #ccd4e2;border-radius:9px}button{background:#284979;color:white;border:0;border-radius:9px;padding:1rem;width:100%;font:inherit}small{color:#687789}</style><main><h1>'+title+'</h1>'+body+'<p><small>Akses melalui Cloudflare Access dan MFA diwajibkan. Jangan gunakan password yang pernah muncul dalam screenshot.</small></p></main></html>',
+  {headers:{'content-type':'text/html; charset=utf-8','cache-control':'no-store','content-security-policy':"default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'","x-content-type-options":"nosniff","referrer-policy":"no-referrer",...extraHeaders}});
 export async function handleAuthV1(request,env,ctx) {
   const path=new URL(request.url).pathname;
   if (!['/activate','/login','/api/v1/auth/access-check','/api/v1/auth/activate','/api/v1/auth/login','/api/v1/auth/me','/api/v1/auth/logout'].includes(path))return null;
@@ -178,19 +221,27 @@ export async function handleAuthV1(request,env,ctx) {
       note:'MFA enforcement is configured in Access; real MFA UAT must be verified separately.'});
   }
   if(!enabled(env))return error(503,'STAGING_AUTH_GATES_PENDING');
-  if(request.method==='GET'&&path==='/activate')
-    return html('Aktivasi Administrator ICOP','<p>Siapkan password baru yang belum pernah digunakan. Cloudflare Access harus sudah memverifikasi email dan MFA Anda.</p><form method="post" action="/api/v1/auth/activate"><label>Password baru (minimal 16 karakter)<input type="password" name="newPassword" minlength="16" autocomplete="new-password" required></label><button>Aktifkan akun saya</button></form>');
-  if(request.method==='GET'&&path==='/login')
-    return html('Login Administrator ICOP','<form method="post" action="/api/v1/auth/login"><input type="hidden" name="tenant" value="DEIT"><label>Email<input type="email" name="email" value="elang.haqeem@gmail.com" autocomplete="username" required></label><label>Password<input type="password" name="password" autocomplete="current-password" required></label><button>Masuk</button></form>');
+  if(request.method==='GET'&&path==='/activate') {
+    const csrf=await csrfIssue(env,'activate');
+    return html('Aktivasi Administrator ICOP','<p>Siapkan password baru yang belum pernah digunakan. Cloudflare Access harus sudah memverifikasi email dan MFA Anda.</p><form method="post" action="/api/v1/auth/activate"><input type="hidden" name="csrf_token" value="'+csrf.token+'"><label>Password baru (minimal 16 karakter)<input type="password" name="newPassword" minlength="16" autocomplete="new-password" required></label><button>Aktifkan akun saya</button></form>',{'set-cookie':csrf.cookie});
+  }
+  if(request.method==='GET'&&path==='/login') {
+    const csrf=await csrfIssue(env,'login');
+    return html('Login Administrator ICOP','<form method="post" action="/api/v1/auth/login"><input type="hidden" name="csrf_token" value="'+csrf.token+'"><input type="hidden" name="tenant" value="DEIT"><label>Email<input type="email" name="email" value="elang.haqeem@gmail.com" autocomplete="username" required></label><label>Password<input type="password" name="password" autocomplete="current-password" required></label><button>Masuk</button></form>',{'set-cookie':csrf.cookie});
+  }
   if(request.method==='GET'&&path==='/api/v1/auth/me') {
     const s=await session(env,request,email);
     if(!s)return error(401,'SESSION_REQUIRED');
     return response(200,{applicationAuthenticated:true,mfaVerified:true,
       user:{id:s.record.user_id,email:s.record.email,role:s.record.role,tenantId:s.record.tenant_id}});
   }
-  if(request.method==='POST' && !sameOrigin(request)) return error(403,'ORIGIN_REQUIRED');
+  // An explicit mismatched Origin is always denied, including with a valid CSRF token.
+  if(request.method==='POST'&&request.headers.has('origin')&&request.headers.get('origin')!==new URL(request.url).origin)
+    return error(403,'ORIGIN_REQUIRED');
   const data=request.method==='POST'?await bodyFrom(request):null;
   if(request.method==='POST'&&!data)return error(400,'BAD_REQUEST');
+  if(request.method==='POST'&&!(await validMutation(request,env,data,path)))
+    return error(403,'ORIGIN_REQUIRED');
   try {
     if(path==='/api/v1/auth/activate'&&request.method==='POST')return await activate(env,email,data);
     if(path==='/api/v1/auth/login'&&request.method==='POST')return await login(env,email,data);
