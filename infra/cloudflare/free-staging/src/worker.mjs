@@ -132,7 +132,8 @@ export default {
       if (!ctx?.access || ctx.access.aud !== env.ACCESS_AUD ||
           typeof ctx.access.getIdentity !== 'function')
         return reply(403, {code:'ACCESS_REQUIRED'});
-      if (!/^application\\/json(?:\\s*;|$)/i.test(request.headers.get('content-type')||''))
+      const mime = (request.headers.get('content-type')||'').split(';',1)[0].trim().toLowerCase();
+      if (mime !== 'application/json')
         return reply(415, {code:'JSON_REQUIRED'});
       const length = Number(request.headers.get('content-length')||0);
       if (!Number.isFinite(length) || length>4096)
