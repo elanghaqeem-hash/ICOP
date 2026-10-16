@@ -200,7 +200,7 @@ test('D1 enrollment SQL binds match placeholders exactly and require challenge C
   });
   assert.equal(confirmed.ok,true);
   for(const item of s.history){
-    const matches=item.sql.match(/\\?/g)||[];
+    const matches=item.sql.match(/[?]/g)||[];
     assert.equal(matches.length,item.values.length,
       'SQL parameter count mismatch: '+item.sql.slice(0,100));
   }
