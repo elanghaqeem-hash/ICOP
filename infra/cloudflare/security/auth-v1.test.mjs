@@ -99,3 +99,21 @@ test('activate once, log in with new password, verify and revoke httpOnly sessio
   const after=await handleAuthV1(req('/api/v1/auth/me','GET',null,{cookie:rawCookie}),e,access());
   assert.equal(after.status,401);
 });
+
+test('Access diagnostic requires a runtime-verified identity even with gates closed',async()=>{
+  const e=env(db()); e.ACCESS_IDENTITY_ENABLED='false'; e.ACCESS_MFA_CONFIRMED='false';
+  const p='/api/v1/auth/access-check';
+  const anonymous=await handleAuthV1(req(p),e,{});
+  assert.equal(anonymous.status,403);
+  assert.equal((await anonymous.json()).code,'CLOUDFLARE_ACCESS_VERIFIED_IDENTITY_REQUIRED');
+  const wrong=await handleAuthV1(req(p),e,access('unapproved@example.com'));
+  assert.equal(wrong.status,403);
+  const matching=await handleAuthV1(req(p),e,access());
+  assert.equal(matching.status,200);
+  const body=await matching.json();
+  assert.equal(body.accessAuthenticated,true);
+  assert.equal(body.applicationAuthenticated,false);
+  assert.equal(body.activationReady,false);
+  assert.equal((await handleAuthV1(req('/activate'),e,{})).status,403);
+  assert.equal((await handleAuthV1(req('/activate'),e,access())).status,503);
+});
