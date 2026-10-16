@@ -29,10 +29,13 @@ export default function LoginPage() {
   const [backend, setBackend] = useState<'checking' | 'configured' | 'not-configured' | 'staging-connected' | 'unknown'>('checking');
   const [isCloudflareDev, setIsCloudflareDev] = useState(false);
   const [statusAttempt, setStatusAttempt] = useState(0);
-  const canSignIn = backend === 'configured';
+  const [loginReady, setLoginReady] = useState(false);
+  // Backend URL presence or D1 schema readiness is never proof of working auth.
+  const canSignIn = backend === 'configured' && loginReady;
 
   useEffect(() => {
     setIsCloudflareDev(window.location.hostname.endsWith('.workers.dev'));
+    setLoginReady(false);
     const controller = new AbortController();
     let active = true;
     fetch('/api/system/status', {
@@ -40,16 +43,17 @@ export default function LoginPage() {
     })
       .then(async (res) => {
         if (!res.ok) throw new Error('Backend readiness unavailable');
-        return res.json() as Promise<{ backend?: string; stagingConnection?: string }>;
+        return res.json() as Promise<{ backend?: string; stagingConnection?: string; loginReady?: boolean }>;
       })
       .then((status) => {
         if (!active) return;
+        setLoginReady(status.loginReady === true);
         setBackend(status.backend === 'CONFIGURED_UNVERIFIED'
           ? 'configured'
           : status.stagingConnection === 'CONNECTED_BOOTSTRAP_ONLY' ? 'staging-connected'
           : status.backend === 'NOT_CONFIGURED' ? 'not-configured' : 'unknown');
       })
-      .catch(() => { if (active) setBackend('unknown'); });
+      .catch(() => { if (active) { setLoginReady(false); setBackend('unknown'); } });
     return () => { active = false; controller.abort(); };
   }, [statusAttempt]);
   const { busy, error, run } = useAction();
@@ -109,18 +113,21 @@ export default function LoginPage() {
                 <span>Login belum tersedia. Backend ICOP development belum terhubung. Jangan masukkan kredensial perusahaan di lingkungan ini.</span>
               )}
               {backend === 'staging-connected' && (
-                <span>Backend staging Cloudflare dan database telah terhubung. Login pengguna belum aktif karena autentikasi, MFA, dan akun uji masih menunggu validasi. Jangan gunakan kata sandi asli di sini.</span>
+                <span>Database staging terhubung, tetapi autentikasi aplikasi belum aktif. Akun perusahaan, MFA, dan uji akses perlu disahkan sebelum login. Jangan gunakan kata sandi asli di sini.</span>
               )}
               {backend === 'configured' && (
-                <span>Koneksi backend sudah dikonfigurasi, tetapi belum dinyatakan lolos UAT. Gunakan hanya akun pengujian yang diizinkan.</span>
+                <span>{loginReady ? 'Layanan login telah dinyatakan siap untuk akun yang diizinkan.' : 'Alamat backend tersedia, tetapi login belum dinyatakan siap. Tunggu pengujian autentikasi, MFA, dan akun resmi.'}</span>
               )}
               {backend === 'unknown' && (
                 <>
                   <span>Status koneksi tidak dapat dipastikan. Login ditunda sampai pemeriksaan berhasil.</span>
-                  <button type="button" onClick={() => { setBackend('checking'); setStatusAttempt((v) => v + 1); }}>
-                    Periksa ulang
-                  </button>
+
                 </>
+              )}
+              {backend !== 'checking' && !canSignIn && (
+                <button type="button" onClick={() => { setBackend('checking'); setLoginReady(false); setStatusAttempt((v) => v + 1); }}>
+                  Periksa ulang status
+                </button>
               )}
             </div>
 
@@ -168,10 +175,9 @@ export default function LoginPage() {
               </div>
             </div>
 
-            <button className="auth-submit" type={canSignIn ? 'submit' : 'button'}
-              onClick={canSignIn ? undefined : () => { setBackend('checking'); setStatusAttempt((v) => v + 1); }}
-              disabled={busy || backend === 'checking'} aria-busy={busy || backend === 'checking'}>
-              <span>{busy ? 'Sedang masuk…' : backend === 'checking' ? 'Memeriksa layanan…' : !canSignIn ? 'Periksa kesiapan login' : 'Masuk ke ICOP'}</span>
+            <button className="auth-submit" type="submit"
+              disabled={busy || !canSignIn} aria-busy={busy || backend === 'checking'}>
+              <span>{busy ? 'Sedang masuk…' : backend === 'checking' ? 'Memeriksa layanan…' : !canSignIn ? 'Login menunggu aktivasi' : 'Masuk ke ICOP'}</span>
               {!busy && (
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                   <path d="M5 12h14m-6-6l6 6-6 6" />
