@@ -1,7 +1,7 @@
 // ICOP Cloudflare staging authentication. Deliberately independent from production Fastify.
 // Access verifies the human identity and enforces MFA outside this Worker.
 // Local password provides an additional factor; no session is issued before both gates pass.
-const APPROVED_EMAIL = 'goehbudiarto@gmail.com';
+const APPROVED_EMAIL = 'elang.haqeem@gmail.com';
 const TENANT = 'DEIT';
 const SESSION = '__Host-icop-staging-session';
 const ITERATIONS = 600000;
@@ -181,7 +181,7 @@ export async function handleAuthV1(request,env,ctx) {
   if(request.method==='GET'&&path==='/activate')
     return html('Aktivasi Administrator ICOP','<p>Siapkan password baru yang belum pernah digunakan. Cloudflare Access harus sudah memverifikasi email dan MFA Anda.</p><form method="post" action="/api/v1/auth/activate"><label>Password baru (minimal 16 karakter)<input type="password" name="newPassword" minlength="16" autocomplete="new-password" required></label><button>Aktifkan akun saya</button></form>');
   if(request.method==='GET'&&path==='/login')
-    return html('Login Administrator ICOP','<form method="post" action="/api/v1/auth/login"><input type="hidden" name="tenant" value="DEIT"><label>Email<input type="email" name="email" value="goehbudiarto@gmail.com" autocomplete="username" required></label><label>Password<input type="password" name="password" autocomplete="current-password" required></label><button>Masuk</button></form>');
+    return html('Login Administrator ICOP','<form method="post" action="/api/v1/auth/login"><input type="hidden" name="tenant" value="DEIT"><label>Email<input type="email" name="email" value="elang.haqeem@gmail.com" autocomplete="username" required></label><label>Password<input type="password" name="password" autocomplete="current-password" required></label><button>Masuk</button></form>');
   if(request.method==='GET'&&path==='/api/v1/auth/me') {
     const s=await session(env,request,email);
     if(!s)return error(401,'SESSION_REQUIRED');

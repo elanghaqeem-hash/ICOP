@@ -11,7 +11,7 @@ Worker: `icop-staging-api` (Cloudflare account selected by the ICOP owner).
 - `GET /login` and `POST /api/v1/auth/login`: Access + MFA and password.
 - `GET /api/v1/auth/me`, `POST /api/v1/auth/logout`: short-lived cookie-backed session and revocation.
 
-**Authorized email:** `goehbudiarto@gmail.com`, tenant `DEIT`. Other Access identities are denied even if they can reach the Worker.
+**Authorized email:** `elang.haqeem@gmail.com`, tenant `DEIT`. Other Access identities are denied even if they can reach the Worker.
 
 ## Release checklist (do not bypass)
 

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { handleAuthV1 } from './auth-v1.mjs';
 
 const origin='https://icop-staging-api.example';
-const email='goehbudiarto@gmail.com';
+const email='elang.haqeem@gmail.com';
 function env(db) {
   return {DB:db, ACCESS_AUD:'test-audience', ACCESS_IDENTITY_ENABLED:'true',
     ACCESS_MFA_CONFIRMED:'true', AUTH_V2_ENABLED:'true',
