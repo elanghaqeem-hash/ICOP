@@ -4,7 +4,7 @@ import { DOA_BRD_V2, DOA_MASTER_PROMPT, DOA_MASTER_PROMPT_V3, FLEXGUARD_POLICY, 
 import { defaultProviderRows } from './modules/ai/gateway.js';
 
 export const SEED_USERS: [string, string, string][] = [
-  ['admin@defendit360.com', 'System Administrator', 'super_admin'],
+  ['goehbudiarto@gmail.com', 'System Administrator', 'super_admin'],
   ['companyadmin@defendit360.com', 'Company Admin', 'company_admin'],
   ['direktur@defendit360.com', 'Direktur Utama', 'director'],
   ['vp@defendit360.com', 'VP Cybersecurity Strategic', 'vp_head'],
@@ -53,7 +53,7 @@ export async function seed(sql: Sql, opts: { password?: string; demo?: boolean }
     await sql`INSERT INTO users (tenant_id, email, full_name, password_hash, role) VALUES (${t}, ${email}, ${name}, ${hash}, ${role})
               ON CONFLICT (tenant_id, lower(email)) DO NOTHING`;
   }
-  const [admin] = await sql`SELECT id FROM users WHERE tenant_id = ${t} AND email = 'admin@defendit360.com'`;
+  const [admin] = await sql`SELECT id FROM users WHERE tenant_id = ${t} AND email = 'goehbudiarto@gmail.com'`;
 
   await ensurePolicies(sql, t, admin.id as string);
   for (const [sku, type, pillar, category, name, ps, unit] of CATALOG) {
