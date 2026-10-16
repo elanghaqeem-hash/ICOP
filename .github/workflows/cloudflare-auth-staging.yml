@@ -1,0 +1,21 @@
+name: Cloudflare Staging Auth Tests
+on:
+  pull_request:
+    paths:
+      - 'infra/cloudflare/security/**'
+      - '.github/workflows/cloudflare-auth-staging.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  auth-security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Syntax check
+        run: node --check infra/cloudflare/security/auth-v1.mjs
+      - name: Activation login session test
+        run: node --test infra/cloudflare/security/auth-v1.test.mjs
