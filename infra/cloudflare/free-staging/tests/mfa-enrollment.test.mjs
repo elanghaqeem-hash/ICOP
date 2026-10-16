@@ -188,3 +188,46 @@ test('DB failure on pending secret or completion denies without session',async()
   assert.equal('recoveryCodes' in failed,false);
   assert.equal(s.user.mfa_enabled,0);
 });
+
+test('D1 enrollment SQL binds match placeholders exactly and require challenge CAS',async()=>{
+  const s=state(),db=fakeDb(s);
+  const issued=await issueMfaChallenge(issueArgs(db));
+  const started=await beginMfaEnrollment(enrollArgs(db,issued.challenge));
+  const seed=new URL(started.provisioningUri).searchParams.get('secret');
+  const code=await totpAt(seed,Math.floor((now+3)/30));
+  const confirmed=await confirmMfaEnrollment({
+    ...enrollArgs(db,issued.challenge),code,now:now+3
+  });
+  assert.equal(confirmed.ok,true);
+  for(const item of s.history){
+    const matches=item.sql.match(/\\?/g)||[];
+    assert.equal(matches.length,item.values.length,
+      'SQL parameter count mismatch: '+item.sql.slice(0,100));
+  }
+  const writes=s.history.map(q=>q.sql);
+  assert.ok(writes.some(q=>q.includes(
+    'UPDATE auth_mfa_challenges SET consumed_at') &&
+    q.includes('consumed_at IS NULL')));
+  assert.ok(writes.some(q=>q.includes('SET mfa_enabled=1') &&
+    q.includes('token_version=?') &&
+    q.includes('EXISTS(SELECT 1 FROM auth_mfa_challenges')));
+  assert.ok(writes.some(q=>q.includes('INSERT INTO mfa_used_steps')));
+  assert.equal(writes.filter(q=>q.includes('INSERT INTO mfa_recovery_codes')).length,10);
+  assert.ok(writes.some(q=>q.includes('auth.mfa_enrolled')));
+  assert.ok(!writes.some(q=>q.includes('INSERT INTO auth_sessions')));
+});
+test('challenge principal mismatch refuses enrollment without writing secrets',async()=>{
+  const s=state(),db=fakeDb(s);
+  const issued=await issueMfaChallenge(issueArgs(db));
+  const historyBefore=s.history.length;
+  const impostor={access:{aud:env.ACCESS_AUD,
+    getIdentity:async()=>({email:'attacker@example.invalid'})}};
+  const result=await beginMfaEnrollment({
+    ...enrollArgs(db,issued.challenge),ctx:impostor
+  });
+  assert.equal(result.ok,false);
+  assert.equal('provisioningUri' in result,false);
+  assert.equal(s.user.mfa_pending_secret_enc,null);
+  assert.ok(!s.history.slice(historyBefore).some(x=>x.sql.includes(
+    'SET mfa_pending_secret_enc')));
+});
