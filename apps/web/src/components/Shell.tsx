@@ -34,11 +34,14 @@ const NAV = [
 
 export default function Shell({ children }: { children: ReactNode }) {
   const [me, setMe] = useState<Me | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [retry, setRetry] = useState(0);
   const [pending, setPending] = useState(0);
   const path = usePathname();
   const router = useRouter();
 
   useEffect(() => {
+    setLoadError(null);
     // Validate the server cookie on every page load; memory metadata is not
     // an authentication source of truth (including after a hard refresh).
     api<Me>('/api/v1/auth/me').then((m) => {
@@ -47,14 +50,29 @@ export default function Shell({ children }: { children: ReactNode }) {
       if ((m as Me & { mfaRequired?: boolean }).mfaRequired) { router.replace('/mfa'); return; }
       if (m.role === 'customer_user' && !path.startsWith('/portal')) router.replace('/portal');
       if (m.permissions.includes('approval.decide')) api('/api/v1/approvals').then((r) => setPending(r.items.length)).catch(() => {});
-    }).catch(() => {});
-  }, [router, path]);
+    }).catch((error: unknown) => {
+      // A broken upstream must never leave the dashboard skeleton spinning forever.
+      setLoadError(error instanceof Error ? error.message : 'Tidak dapat memverifikasi sesi ICOP.');
+    });
+  }, [router, path, retry]);
 
   useEffect(() => {
     if ('serviceWorker' in navigator && process.env.NODE_ENV === 'production') navigator.serviceWorker.register('/sw.js').catch(() => {});
   }, []);
 
-  if (!me) return <div className="main"><div className="skeleton" /><div className="skeleton" /></div>;
+  if (!me) return (
+    <main className="main">
+      {loadError ? (
+        <section className="card" role="alert" aria-live="polite">
+          <h2>Menu utama belum dapat dibuka</h2>
+          <p>{loadError}</p>
+          <p>Periksa koneksi ICOP atau hubungi administrator. Akses tetap memerlukan sesi login yang sah.</p>
+          <button type="button" className="btn" onClick={() => setRetry((value) => value + 1)}>Coba lagi</button>
+          <p><Link href="/login">Kembali ke halaman login</Link></p>
+        </section>
+      ) : <><div className="skeleton" /><div className="skeleton" /></>}
+    </main>
+  );
   const items = NAV.filter((n) => me.permissions.includes(n.perm));
   const isOn = (h: string) => (h === '/' ? path === '/' : h === '/portal' ? path === '/portal' || /^\/portal\/[0-9a-f-]{36}$/.test(path) : path.startsWith(h));
   const logout = async () => {
