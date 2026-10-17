@@ -6,9 +6,11 @@
  * hostname. handleAuthV1 is the sole session authority (D1+Access+MFA+cookie).
  * Business modules are NOT migrated to D1 yet: they intentionally fail closed.
  */
+import { handleStagingQuotation } from './staging-quotation.mjs';
+
 const NAV_PERMISSIONS = Object.freeze([
   'dashboard.read','opportunity.read','customer.read','tender.read',
-  'quotation.read','contract.read','project.read','flexguard.read',
+  'quotation.read','quotation.write','contract.read','project.read','flexguard.read',
   'documents.read','helpdesk.read','billing.read','template.read',
   'approval.read','ai.use','vendor.read','policy.read','audit.read','user.manage'
 ]);
@@ -213,6 +215,8 @@ export async function handleStagingDashboard(request,env,ctx,handleAuthV1){
   // email, tenant and role headers have no authority.
   if(!await accessVerified(request,env,ctx,handleAuthV1))
     return json(403,{code:'CLOUDFLARE_ACCESS_VERIFIED_IDENTITY_REQUIRED'});
+  const quotationReply=await handleStagingQuotation(request,env,()=>appSession(request,env,ctx,handleAuthV1));
+  if(quotationReply)return quotationReply;
   if(path==='/login'&&request.method==='GET'){
     const session=await appSession(request,env,ctx,handleAuthV1);
     return session?redirect('/'):loginPage();
