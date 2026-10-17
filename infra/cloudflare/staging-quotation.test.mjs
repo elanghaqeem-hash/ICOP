@@ -195,7 +195,7 @@ test('Tenant-scoped detail not leaked to another tenant and user text escaped',a
 test('Android Origin null and Origin-less requests accept only a signed session-bound form token',async()=>{
   const env=store();
   const data=good();
-  const android=await signedPost(env,data,{origin:'null','sec-fetch-site':'same-origin'});
+  const android=await handleStagingQuotation(await signedPost(env,data,{origin:'null','sec-fetch-site':'same-origin'}),env,session);
   assert.equal(android.status,201);
   const form=await handleStagingQuotation(req('/quotations/new'),env,session);
   const token=(await form.text()).match(/name="csrfToken" value="([^"]+)"/)?.[1];
