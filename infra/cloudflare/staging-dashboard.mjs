@@ -104,6 +104,23 @@ button:disabled{opacity:.65;cursor:wait}.message{min-height:20px;color:#aa3544;m
     'content-security-policy':"default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"}});
 }
 
+const HOME_HTML="<!doctype html><html lang=\"id\"><head><meta charset=\"utf-8\"/><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"/>\n<title>Workspace · ICOP CyberBusiness 360</title><style>\n:root{font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,\"Segoe UI\",sans-serif;background:#f5f7fb;color:#1b2d49}\n*{box-sizing:border-box}body{margin:0;min-height:100vh}header{background:#152d51;color:white;padding:18px max(18px,calc((100vw - 1060px)/2))}\nheader strong{font-size:17px}header small{display:block;color:#b8cce9;font-size:11px;margin-top:4px}\nmain{width:min(calc(100% - 32px),1030px);margin:28px auto 95px}h1{font-size:clamp(23px,3vw,31px);margin:0 0 8px;letter-spacing:-.6px}\nh2{font-size:16px;margin:0 0 12px}p{font-size:14px;color:#64758c;line-height:1.65;margin:0}\n.top{display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:14px}\n.tag{font-size:11px;border-radius:20px;background:#e6edf7;color:#32588d;font-weight:700;padding:7px 12px}\n.cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin:25px 0}\n.card{min-width:0;background:white;border:1px solid #dfe6f0;border-radius:14px;padding:21px;box-shadow:0 5px 16px #14274710}\n.card p{min-height:75px;font-size:13px}.metric{font-size:26px;font-weight:750;color:#2b4e87;margin-bottom:9px}\n.btn{min-height:45px;display:inline-flex;align-items:center;justify-content:center;text-decoration:none;cursor:pointer;\nbackground:#2b518c;color:white;border:0;border-radius:9px;padding:12px 18px;font-size:14px;font-weight:700;margin-top:14px}\n.btn.alt{background:#eaf0fa;color:#2b518c}.btn:disabled{opacity:.6}\n.message{padding:17px;border-radius:11px;background:#fff;border:1px solid #dfe6ef;font-size:13px;line-height:1.65;color:#556b86}\n.warn{padding:14px 16px;border-radius:10px;background:#fff9eb;border:1px solid #ecdbba;font-size:13px;margin:20px 0}\n.foot{display:flex;align-items:center;justify-content:space-between;gap:15px;flex-wrap:wrap;margin-top:20px}\n#logout-error{font-size:13px;color:#a43845}\n@media(max-width:730px){main{width:calc(100% - 26px);margin:22px auto 95px}.cards{grid-template-columns:1fr;gap:12px}\n.card{padding:18px}.card p{min-height:0}.card .btn,.foot .btn{width:100%}.tag{order:-1}.foot{display:block}}\n</style><script src=\"/__icop/home.js\" defer></script></head><body>\n<header><strong>ICOP<small>CYBERBUSINESS 360 · STAGING</small></strong></header>\n<main><section class=\"top\"><div><h1>Workspace Administrator</h1>\n<p>Akun __ICOP_EMAIL__ · tenant DEIT</p></div><span class=\"tag\">Cloudflare Access + MFA</span></section>\n__ICOP_DB_WARNING__\n<div class=\"cards\"><article class=\"card\"><h2>Buat Quotation</h2><p>Lengkapi rincian layanan dan harga, lalu simpan draft ke database staging.</p>\n<a class=\"btn\" href=\"/quotations/new\">+ Buat Quotation</a></article>\n<article class=\"card\"><h2>Draft Quotation</h2><div class=\"metric\">__ICOP_DRAFT_COUNT__</div>\n<p>Jumlah draft tersimpan dari database D1, bukan data contoh.</p>\n<a class=\"btn alt\" href=\"/quotations\">Lihat daftar draft</a></article>\n<article class=\"card\"><h2>Modul bisnis lainnya</h2>\n<p>CRM, tender, pricing dan approval belum dimigrasikan sepenuhnya ke API D1 staging.</p>\n<span class=\"tag\">Belum siap di staging</span></article></div>\n<section class=\"message\"><b>Batasan tahap ini.</b> Draft quotation masih diinput manual,\nbelum dikaitkan dengan master CRM, pricing scenario, approval dan surat penawaran resmi.\nHalaman staging ini menggunakan navigasi halaman penuh agar tidak bergantung pada loading React/Next.js.</section>\n<div class=\"foot\"><div><button id=\"icop-logout\" type=\"button\" class=\"btn alt\">Keluar</button>\n<p id=\"logout-error\" role=\"alert\" aria-live=\"polite\"></p></div>\n<p>ICOP CyberBusiness 360 · Internal workspace</p></div></main></body></html>";
+const HOME_JS="(() => {\n  const button=document.getElementById('icop-logout');\n  if(!button)return;\n  button.addEventListener('click',async()=>{\n    if(button.disabled)return;\n    button.disabled=true;button.textContent='Keluar…';\n    try{\n      const result=await fetch('/api/v1/auth/logout',{method:'POST',\n        credentials:'same-origin',cache:'no-store',\n        headers:{'content-type':'application/json'},body:'{}'});\n      if(!result.ok)throw Error('logout failed');\n      location.replace('/login');\n    }catch{\n      button.disabled=false;button.textContent='Keluar';\n      document.getElementById('logout-error').textContent='Logout gagal. Coba lagi.';\n    }\n  });\n})();";
+const safeHtml=x=>String(x??'').replace(/[&<>"']/g,k=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[k]));
+async function stagingHome(env,user){
+  let count=null;
+  try{
+    const result=await env.DB.prepare("SELECT COUNT(*) AS total FROM staging_quotation_drafts WHERE tenant_id=(SELECT id FROM tenants WHERE code=? LIMIT 1)").bind('DEIT').first();
+    if(Number.isSafeInteger(result?.total)&&result.total>=0)count=result.total;
+  }catch{/* Keep the database's current status explicit, never invent records. */}
+  const body=HOME_HTML.replaceAll('__ICOP_EMAIL__',safeHtml(user.email))
+    .replaceAll('__ICOP_DRAFT_COUNT__',count===null?'Belum dapat diperiksa':String(count))
+    .replaceAll('__ICOP_DB_WARNING__',count===null?'<div class="warn">Jumlah draft sementara tidak dapat dibaca dari D1. Draft baru hanya dinyatakan tersimpan jika server mengonfirmasi.</div>':'');
+  return new Response(body,{status:200,headers:{'content-type':'text/html; charset=utf-8',
+    'cache-control':'no-store, private','x-content-type-options':'nosniff','x-frame-options':'DENY',
+    'referrer-policy':'no-referrer','content-security-policy':"default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"}});
+}
+
 const STATIC_PATH = /^\/(?:_next\/|favicon\.ico$|icon\.svg$|manifest\.webmanifest$|sw\.js$|robots\.txt$)/;
 const BLOCKED_PATH = /(?:^|\/)(?:\.git|\.env|\.well-known\/private|admin-api|internal)(?:\/|$)/i;
 const noCache={'cache-control':'no-store','x-content-type-options':'nosniff'};
@@ -224,6 +241,13 @@ export async function handleStagingDashboard(request,env,ctx,handleAuthV1){
   if(path==='/__icop/login.js'&&request.method==='GET')return new Response(LOGIN_JS,{
     status:200,headers:{'content-type':'application/javascript; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'}
   });
+  if(path==='/__icop/home.js'&&request.method==='GET')return new Response(HOME_JS,{
+    status:200,headers:{'content-type':'application/javascript; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'}
+  });
+  if((path==='/'||path==='/__icop/home')&&request.method==='GET'){
+    const verified=await appSession(request,env,ctx,handleAuthV1);
+    return verified?stagingHome(env,verified):redirect('/login');
+  }
   if(STATIC_PATH.test(path)&&request.method==='GET')return frontend(request,env);
   if(path.startsWith('/api/v1/')){
     const session=await appSession(request,env,ctx,handleAuthV1);
