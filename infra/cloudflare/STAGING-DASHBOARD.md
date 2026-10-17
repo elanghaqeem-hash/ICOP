@@ -12,14 +12,15 @@ Cloudflare Access + Independent MFA → \`icop-staging-api\` Worker
 → \`handleStagingDashboard\` → D1-authenticated \`handleAuthV1\`
 → Service Binding \`ICOP_FRONTEND\` → existing \`icop\` Next.js UI (GET only).
 
-- GET /login returns the existing responsive Next.js login UI;
+- GET /login serves a responsive staging-only login UI (the live `icop` Worker
+  still contains an outdated readiness form);
   POST /api/v1/auth/login runs the verified D1/Access/MFA password flow on the
   **same origin** and sets Secure HttpOnly session cookies.
 - GET /api/v1/auth/me validates the D1 token, tenant and user role and returns
   the shape expected by Next Shell. Permissions come from the staging server,
   not a client header. No JWT or session token is exposed to JavaScript.
 - GET / and other UI paths require a valid server-side session, then render
-  the existing Next.js frontend via a GET-only service binding.
+  the existing Next.js frontend via a GET-only service binding for dashboard and static Next assets.
 - POST /api/v1/auth/logout performs a same-origin check, invokes D1 session
   revocation and clears the cookie; navigation to /login is handled by Shell.
 - Protected static and Next assets are proxied only after Access verifies the
@@ -45,7 +46,7 @@ Cloudflare Access + Independent MFA → \`icop-staging-api\` Worker
 5. Re-read script and settings to confirm both modules, Access/MFA flags,
    D1, secret and \`AUTH_ACTIVATION_ENABLED=false\`.
 6. Test fresh anonymous visit: Cloudflare Access challenge, then responsive
-   Next login page. Verify same-origin password login → / dashboard and
+   staging login page backed by the existing D1 auth module. Verify same-origin password login → / dashboard and
    \`/api/v1/auth/me\` returns approved role with permissions.
 7. Confirm unknown business endpoints return 503 after login and 401
    without a D1 session. Confirm logout revokes the D1 session and redirects
