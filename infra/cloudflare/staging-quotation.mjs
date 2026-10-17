@@ -36,8 +36,8 @@ function validate(data){
   if(!validText(data.title,3,200)||!optional(data.scopeSummary,2000))return 'Judul atau ruang lingkup tidak valid.';
   if(!Array.isArray(data.lines)||data.lines.length<1||data.lines.length>30)return 'Isi minimal satu dan maksimal 30 baris layanan.';
   if(!num(data.discountPercent,0,99)||!num(data.taxPercent,0,25)||
-    Math.round(data.discountPercent*100)!==data.discountPercent*100||
-    Math.round(data.taxPercent*100)!==data.taxPercent*100)return 'Diskon dan pajak maksimum dua angka desimal.';
+    Math.abs(Math.round(data.discountPercent*100)-data.discountPercent*100)>1e-6||
+    Math.abs(Math.round(data.taxPercent*100)-data.taxPercent*100)>1e-6)return 'Diskon dan pajak maksimum dua angka desimal.';
   if(!Number.isInteger(data.validityDays)||data.validityDays<7||data.validityDays>180)return 'Masa berlaku 7–180 hari.';
   if(!validText(data.paymentTerms,3,500)||!optional(data.deliveryTerms,1000)||!optional(data.exclusions,2000))
     return 'Termin atau ketentuan tambahan tidak valid.';
@@ -46,7 +46,7 @@ function validate(data){
   for(const line of data.lines){
     if(!line||!validText(line.description,2,500)||!validText(line.unit,1,40)||
        !num(line.quantity,0.01,100000)||!num(line.unitPrice,0,1000000000000)||
-       !Number.isInteger(line.unitPrice)||Math.round(line.quantity*100)!==line.quantity*100)
+       !Number.isInteger(line.unitPrice)||Math.abs(Math.round(line.quantity*100)-line.quantity*100)>1e-6)
       return 'Uraian, kuantitas, satuan, atau harga baris tidak valid.';
     const amount=Math.round(line.quantity*line.unitPrice);
     if(!moneySafe(amount))return 'Harga item terlalu besar.';
