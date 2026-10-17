@@ -4,6 +4,8 @@ on:
     paths:
       - 'infra/cloudflare/staging-dashboard*'
       - 'infra/cloudflare/security/auth-v1*'
+      - 'infra/cloudflare/staging-quotation*'
+      - 'infra/cloudflare/migrations/0004-staging-quotation-drafts.sql'
       - '.github/workflows/icop-staging-dashboard.yml'
   workflow_dispatch:
 permissions:
@@ -20,8 +22,10 @@ jobs:
         run: |
           node --check infra/cloudflare/staging-dashboard.mjs
           node --check infra/cloudflare/staging-dashboard-worker.mjs
+          node --check infra/cloudflare/staging-quotation.mjs
           node --check infra/cloudflare/security/auth-v1.mjs
       - name: End-to-end backend and staging shell unit tests
         run: |
           node --test infra/cloudflare/staging-dashboard.test.mjs
+          node --test infra/cloudflare/staging-quotation.test.mjs
           node --test infra/cloudflare/security/auth-v1.test.mjs
