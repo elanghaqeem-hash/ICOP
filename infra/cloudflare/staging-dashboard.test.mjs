@@ -55,13 +55,22 @@ test('unchanged API Worker behavior before frontend Service Binding is applied',
   const f=fixtures();delete f.env.ICOP_FRONTEND;
   assert.equal(await handleStagingDashboard(req('/'),f.env,f.ctx,f.auth),null);
 });
-test('existing real login HTML served from frontend service, no auth cookie forwarded',async()=>{
+test('responsive staging login uses same-origin D1 form without sharing tokens',async()=>{
   const f=fixtures();
   const r=await handleStagingDashboard(req('/login',{headers:{cookie:'sensitive=xyz',authorization:'Bearer hidden'}}),f.env,f.ctx,f.auth);
-  assert.equal(r.status,200);assert.match(await r.text(),/Real frontend login/);
+  assert.equal(r.status,200);
+  const html=await r.text();
+  assert.match(html,/Masuk ke ICOP/);
+  assert.match(html,/name="viewport"/);
+  assert.match(html,/@media\(max-width:760px\)/);
+  assert.match(html,/autocomplete="current-password"/);
+  assert.match(html,/\/__icop\/login.js/);
   assert.equal(r.headers.get('set-cookie'),null);
-  assert.equal(f.calls[0].headers.cookie,undefined);
-  assert.equal(f.calls[0].headers.authorization,undefined);
+  assert.match(r.headers.get('content-security-policy'),/script-src 'self'/);
+  assert.equal(f.calls.length,0,'staging login is not delegated to old preview code');
+  const js=await handleStagingDashboard(req('/__icop/login.js'),f.env,f.ctx,f.auth);
+  assert.equal(js.status,200);
+  assert.match(await js.text(),/credentials:'same-origin'/);
 });
 test('same-origin login writes Secure HttpOnly staging auth cookie, not browser token',async()=>{
   const f=fixtures();
