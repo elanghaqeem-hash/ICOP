@@ -12,6 +12,96 @@ const NAV_PERMISSIONS = Object.freeze([
   'documents.read','helpdesk.read','billing.read','template.read',
   'approval.read','ai.use','vendor.read','policy.read','audit.read','user.manage'
 ]);
+
+const LOGIN_JS = String.raw`(() => {
+  const form=document.getElementById('icop-login-form');
+  const result=document.getElementById('login-status');
+  const submit=document.getElementById('login-submit');
+  const show=document.getElementById('show-password');
+  const password=document.getElementById('icop-password');
+  show.addEventListener('click',()=>{
+    password.type=password.type==='password'?'text':'password';
+    show.setAttribute('aria-pressed',String(password.type==='text'));
+    show.textContent=password.type==='text'?'Sembunyikan':'Lihat';
+  });
+  form.addEventListener('submit',async event=>{
+    event.preventDefault();
+    if(submit.disabled)return;
+    const email=document.getElementById('icop-email').value.trim().toLowerCase();
+    const value=password.value;
+    submit.disabled=true;submit.textContent='Memverifikasi…';
+    result.textContent='Menghubungkan ke ICOP…';result.setAttribute('role','status');
+    try{
+      const res=await fetch('/api/v1/auth/login',{
+        method:'POST',credentials:'same-origin',cache:'no-store',
+        headers:{'content-type':'application/json'},
+        body:JSON.stringify({tenant:'DEIT',email,password:value})
+      });
+      const data=await res.json().catch(()=>({}));
+      if(res.ok&&data.applicationAuthenticated===true&&data.mfaVerified===true&&
+         data.user?.role==='super_admin'){
+        password.value='';
+        window.location.replace('/');
+        return;
+      }
+      const messages={
+        INVALID_CREDENTIALS:'Email atau password tidak sesuai.',
+        ACCOUNT_TEMPORARILY_LOCKED:'Akun terkunci sementara. Coba lagi setelah 15 menit.',
+        CLOUDFLARE_ACCESS_VERIFIED_IDENTITY_REQUIRED:'Verifikasi Cloudflare Access diperlukan.',
+        STAGING_AUTH_GATES_PENDING:'Layanan autentikasi masih dalam validasi.'
+      };
+      result.textContent=messages[data.code]||'Login gagal. Periksa akses Cloudflare dan coba lagi.';
+      result.setAttribute('role','alert');
+    }catch{
+      result.textContent='Koneksi terputus. Periksa jaringan, kemudian ulangi.';
+      result.setAttribute('role','alert');
+    }finally{
+      submit.disabled=false;
+      submit.textContent='Masuk ke ICOP';
+    }
+  });
+})();`;
+function loginPage(){
+  const html=String.raw`<!doctype html>
+<html lang="id"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<meta name="color-scheme" content="light"/><title>Masuk · ICOP CyberBusiness 360</title>
+<style>
+:root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#192c48;background:#f4f6fa}
+*{box-sizing:border-box}body{margin:0;min-height:100vh}.layout{min-height:100vh;display:grid;grid-template-columns:minmax(0,1fr) minmax(360px,540px)}
+.brand{background:linear-gradient(150deg,#142747,#263b6e 65%,#273a73);color:white;padding:clamp(32px,5vw,72px);display:flex;flex-direction:column;justify-content:space-between}
+.logo{font-weight:800;font-size:24px;letter-spacing:-.5px}.logo small{display:block;font-size:10px;letter-spacing:2px;font-weight:600;color:#a8c6e9}
+.brand-message{max-width:500px}.brand-message h1{font-size:clamp(29px,3vw,45px);font-weight:700;line-height:1.16;letter-spacing:-1.2px;margin-bottom:20px}.brand-message p{color:#c6d1e4;max-width:430px;line-height:1.65}
+.brand-foot{font-size:12px;color:#aebdda}.side{display:flex;justify-content:center;align-items:center;padding:28px clamp(20px,4vw,62px)}
+.card{width:100%;max-width:430px;background:white;border:1px solid #e5e8f0;border-radius:18px;padding:clamp(26px,3vw,40px);box-shadow:0 10px 45px #1326470c}
+.tag{font-size:11px;font-weight:700;letter-spacing:1px;color:#355b9a;text-transform:uppercase}
+h2{font-size:26px;letter-spacing:-.6px;margin:18px 0 10px}p{font-size:14px;line-height:1.6;color:#65748b;margin:0 0 22px}
+label{display:block;font-size:13px;font-weight:700;margin:18px 0 9px}.field{width:100%;height:48px;border:1px solid #cfd9e7;border-radius:10px;padding:0 13px;font:inherit;font-size:15px;background:white;color:#1d304c}
+.field:focus{outline:2px solid #5c8ed3;outline-offset:2px}.field[readonly]{background:#f6f8fb;color:#465b76}
+.pw-wrap{display:flex;position:relative}.pw-wrap input{padding-right:100px}.show{position:absolute;right:8px;top:8px;background:transparent;border:0;font-weight:600;color:#345581;padding:6px;cursor:pointer}
+button[type=submit]{background:#274b85;color:white;border:0;width:100%;height:49px;border-radius:10px;font-weight:700;font-size:15px;cursor:pointer;margin-top:24px}
+button:disabled{opacity:.65;cursor:wait}.message{min-height:20px;color:#aa3544;margin-top:12px;font-size:13px}
+.note{border-top:1px solid #edf0f5;padding-top:18px;color:#728099;font-size:12px;line-height:1.65;margin-top:10px}
+@media(max-width:760px){.layout{grid-template-columns:1fr}.brand{padding:25px 24px 18px;min-height:132px}.brand-message,.brand-foot{display:none}.side{align-items:flex-start;padding:20px 16px 32px}.card{padding:26px 24px;border-radius:15px;box-shadow:0 8px 24px #1326470a}h2{font-size:24px}}
+</style><script src="/__icop/login.js" defer></script></head>
+<body><div class="layout"><section class="brand" aria-label="ICOP"><div class="logo">ICOP <small>CYBERBUSINESS 360</small></div>
+<div class="brand-message"><h1>Selamat datang kembali di ICOP.</h1><p>Kelola pekerjaan cybersecurity, pelanggan, tender, dan layanan dalam satu workspace perusahaan.</p></div>
+<div class="brand-foot">DEFENDIT360 · INTERNAL WORKSPACE</div></section>
+<main class="side"><div class="card"><span class="tag">Staging · Cloudflare Access + MFA</span><h2>Masuk ke ICOP</h2>
+<p>Akses hanya untuk administrator yang telah diverifikasi melalui Cloudflare Access.</p>
+<form id="icop-login-form" autocomplete="on"><label for="icop-email">Alamat email</label>
+<input class="field" id="icop-email" name="email" type="email" autocomplete="username" value="elang.haqeem@gmail.com" readonly required/>
+<label for="icop-password">Kata sandi</label><div class="pw-wrap">
+<input class="field" id="icop-password" name="password" type="password" autocomplete="current-password" placeholder="Masukkan password baru" required/>
+<button type="button" class="show" id="show-password" aria-pressed="false">Lihat</button></div>
+<button id="login-submit" type="submit">Masuk ke ICOP</button><div id="login-status" class="message" aria-live="polite"></div></form>
+<div class="note">Akses ini dilindungi Cloudflare Access, MFA, dan sesi aman 30 menit. Modul bisnis staging yang belum dimigrasikan tidak akan menampilkan data tiruan.</div>
+</div></main></div></body></html>`;
+  return new Response(html,{status:200,headers:{'content-type':'text/html; charset=utf-8',
+    'cache-control':'no-store','x-frame-options':'DENY','x-content-type-options':'nosniff',
+    'referrer-policy':'no-referrer',
+    'content-security-policy':"default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"}});
+}
+
 const STATIC_PATH = /^\/(?:_next\/|favicon\.ico$|icon\.svg$|manifest\.webmanifest$|sw\.js$|robots\.txt$)/;
 const BLOCKED_PATH = /(?:^|\/)(?:\.git|\.env|\.well-known\/private|admin-api|internal)(?:\/|$)/i;
 const noCache={'cache-control':'no-store','x-content-type-options':'nosniff'};
@@ -125,8 +215,11 @@ export async function handleStagingDashboard(request,env,ctx,handleAuthV1){
     return json(403,{code:'CLOUDFLARE_ACCESS_VERIFIED_IDENTITY_REQUIRED'});
   if(path==='/login'&&request.method==='GET'){
     const session=await appSession(request,env,ctx,handleAuthV1);
-    return session?redirect('/'):frontend(request,env);
+    return session?redirect('/'):loginPage();
   }
+  if(path==='/__icop/login.js'&&request.method==='GET')return new Response(LOGIN_JS,{
+    status:200,headers:{'content-type':'application/javascript; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'}
+  });
   if(STATIC_PATH.test(path)&&request.method==='GET')return frontend(request,env);
   if(path.startsWith('/api/v1/')){
     const session=await appSession(request,env,ctx,handleAuthV1);
