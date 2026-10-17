@@ -15,6 +15,9 @@ function fixtures(){
       });
     }},
     DB:{prepare(sql){
+      if(sql.includes('SELECT COUNT(*) AS total FROM staging_quotation_drafts')){
+        return {bind(code){assert.equal(code,'DEIT');return {async first(){return {total:2}}}}};
+      }
       assert.match(sql,/FROM users u JOIN tenants/);
       return {bind(id,email){
         assert.equal(id,'owner-id');
@@ -95,7 +98,7 @@ test('server session response matches ICOP Next Shell contract and RBAC',async()
   assert.ok(!data.permissions.includes('approval.decide'),'preserve separation of duties');
   assert.ok(!data.permissions.includes('portal.access'),'internal admin is not customer user');
 });
-test('protected dashboard redirects to real frontend login until valid D1 session',async()=>{
+test('staging home always redirects unauthenticated visitors, then renders real D1-backed quotation entry',async()=>{
   const f=fixtures();
   const deny=await handleStagingDashboard(req('/'),f.env,f.ctx,f.auth);
   assert.equal(deny.status,303);
@@ -103,9 +106,22 @@ test('protected dashboard redirects to real frontend login until valid D1 sessio
   assert.equal(f.calls.length,0);
   const ok=await handleStagingDashboard(req('/',{headers:{cookie}}),f.env,f.ctx,f.auth);
   assert.equal(ok.status,200);
-  assert.match(await ok.text(),/Real ICOP dashboard/);
+  const html=await ok.text();
+  assert.match(html,/Workspace Administrator/);
+  assert.match(html,/href="\/quotations\/new"/);
+  assert.match(html,/Lihat daftar draft/);
+  assert.match(html,/>2<\/div>/,'real D1-backed count');
+  assert.match(html,/name="viewport"/);
+  assert.match(html,/ICOP CyberBusiness 360/);
+  assert.doesNotMatch(html,/class="skeleton"/);
   assert.equal(ok.headers.get('set-cookie'),null);
-  assert.equal(f.calls[0].headers.cookie,undefined);
+  assert.match(ok.headers.get('content-security-policy'),/script-src 'self'/);
+  assert.equal(f.calls.length,0,'homepage must not render unsupported Next shell');
+  const js=await handleStagingDashboard(req('/__icop/home.js',{headers:{cookie}}),f.env,f.ctx,f.auth);
+  assert.equal(js.status,200);
+  assert.match(await js.text(),/api\/v1\/auth\/logout/);
+  const alternate=await handleStagingDashboard(req('/__icop/home',{headers:{cookie}}),f.env,f.ctx,f.auth);
+  assert.equal(alternate.status,200);
 });
 test('static asset requests remain protected by Cloudflare Access but not app login',async()=>{
   const f=fixtures();
