@@ -1,0 +1,27 @@
+name: ICOP Staging Dashboard Gateway
+on:
+  pull_request:
+    paths:
+      - 'infra/cloudflare/staging-dashboard*'
+      - 'infra/cloudflare/security/auth-v1*'
+      - '.github/workflows/icop-staging-dashboard.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  staging-gateway:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate production-preserving syntax
+        run: |
+          node --check infra/cloudflare/staging-dashboard.mjs
+          node --check infra/cloudflare/staging-dashboard-worker.mjs
+          node --check infra/cloudflare/security/auth-v1.mjs
+      - name: End-to-end backend and staging shell unit tests
+        run: |
+          node --test infra/cloudflare/staging-dashboard.test.mjs
+          node --test infra/cloudflare/security/auth-v1.test.mjs
