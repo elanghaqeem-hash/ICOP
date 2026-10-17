@@ -79,12 +79,20 @@ function store(){
       }
     }
   };
-  return {DB,state};
+  return {DB,state,SESSION_HMAC_KEY:'f'.repeat(64)};
 }
 const post=(data,headers={})=>req('/api/v1/quotation-drafts',{
   method:'POST',headers:{'content-type':'application/json',origin:base,...headers},
   body:JSON.stringify(data)
 });
+async function signedPost(env,data,headers={}) {
+  const r=await handleStagingQuotation(req('/quotations/new'),env,session);
+  assert.equal(r.status,200);
+  const html=await r.text();
+  const token=html.match(/name="csrfToken" value="([^"]+)"/)?.[1];
+  assert.match(token,/^v1\.[0-9]{10}\.[a-f0-9]{32}\.[a-f0-9]{64}$/);
+  return post({...data,csrfToken:token},headers);
+}
 test('Quotation menu and direct new form are available on mobile with no fabricated records',async()=>{
   const env=store();
   const list=await handleStagingQuotation(req('/quotations'),env,session);
@@ -109,7 +117,7 @@ test('Quotation menu and direct new form are available on mobile with no fabrica
 });
 test('A verified admin saves real DRAFT to tenant D1, server computes totals and creates audit atomically',async()=>{
   const env=store();
-  const response=await handleStagingQuotation(post(good()),env,session);
+  const response=await handleStagingQuotation(await signedPost(env,good()),env,session);
   assert.equal(response.status,201,await response.clone().text());
   const body=await response.json();
   assert.equal(body.status,'DRAFT');
@@ -131,19 +139,19 @@ test('A verified admin saves real DRAFT to tenant D1, server computes totals and
 });
 test('Submission retry does not duplicate draft or audit',async()=>{
   const env=store(),data=good();
-  assert.equal((await handleStagingQuotation(post(data),env,session)).status,201);
-  const again=await handleStagingQuotation(post(data),env,session);
+  assert.equal((await handleStagingQuotation(await signedPost(env,data),env,session)).status,201);
+  const again=await handleStagingQuotation(await signedPost(env,data),env,session);
   assert.equal(again.status,200);
   assert.equal(env.state.rows.length,1);
   assert.equal(env.state.audits.length,1);
 });
 test('CSRF, MFA session and permissions reject unauthorized draft creation',async()=>{
   const env=store();
-  const cross=await handleStagingQuotation(post(good(),{origin:'https://evil.example'}),env,session);
+  const cross=await handleStagingQuotation(await signedPost(env,good(),{origin:'https://evil.example'}),env,session);
   assert.equal(cross.status,403);
-  const unauth=await handleStagingQuotation(post(good()),env,async()=>null);
+  const unauth=await handleStagingQuotation(await signedPost(env,good()),env,async()=>null);
   assert.equal(unauth.status,401);
-  const noWrite=await handleStagingQuotation(post(good()),env,async()=>({...me,permissions:['quotation.read']}));
+  const noWrite=await handleStagingQuotation(await signedPost(env,good()),env,async()=>({...me,permissions:['quotation.read']}));
   assert.equal(noWrite.status,403);
   assert.equal(env.state.rows.length,0);
 });
@@ -158,21 +166,21 @@ test('Invalid totals, missing customer and malformed lines fail without inserts'
     {...good(),taxPercent:11.001}
   ];
   for(const x of cases){
-    const response=await handleStagingQuotation(post(x),env,session);
+    const response=await handleStagingQuotation(await signedPost(env,x),env,session);
     assert.equal(response.status,422,await response.clone().text());
   }
   assert.equal(env.state.rows.length,0);
 });
 test('Audit insertion failure rolls back draft row',async()=>{
   const env=store();env.state.failAudit=true;
-  const r=await handleStagingQuotation(post(good()),env,session);
+  const r=await handleStagingQuotation(await signedPost(env,good()),env,session);
   assert.equal(r.status,503);
   assert.deepEqual(env.state.rows,[]);
   assert.deepEqual(env.state.audits,[]);
 });
 test('Tenant-scoped detail not leaked to another tenant and user text escaped',async()=>{
   const env=store(),data=good();data.title='<img src=x onerror=alert(1)>';
-  const created=await handleStagingQuotation(post(data),env,session);
+  const created=await handleStagingQuotation(await signedPost(env,data),env,session);
   assert.equal(created.status,201);
   const id=(await created.json()).id;
   const page=await handleStagingQuotation(req('/quotations/'+id),env,session);
@@ -182,4 +190,24 @@ test('Tenant-scoped detail not leaked to another tenant and user text escaped',a
   env.state.tenant.id='DIFFERENT_TENANT';
   const other=await handleStagingQuotation(req('/quotations/'+id),env,session);
   assert.equal(other.status,404);
+});
+
+test('Android Origin null and Origin-less requests accept only a signed session-bound form token',async()=>{
+  const env=store();
+  const data=good();
+  const android=await signedPost(env,data,{origin:'null','sec-fetch-site':'same-origin'});
+  assert.equal(android.status,201);
+  const form=await handleStagingQuotation(req('/quotations/new'),env,session);
+  const token=(await form.text()).match(/name="csrfToken" value="([^"]+)"/)?.[1];
+  const clean=new Request(base+'/api/v1/quotation-drafts',{
+    method:'POST',headers:{'content-type':'application/json'},
+    body:JSON.stringify({...good(),submissionKey:'mobile-without-origin',csrfToken:token})
+  });
+  const accepted=await handleStagingQuotation(clean,env,session);
+  assert.equal(accepted.status,201);
+  const missing=await handleStagingQuotation(post({...good(),submissionKey:'token-missing'}),env,session);
+  assert.equal(missing.status,403);
+  const forged=await handleStagingQuotation(post({...good(),submissionKey:'token-forged',csrfToken:'v1.1000000000.'+'0'.repeat(32)+'.'+'1'.repeat(64)}),env,session);
+  assert.equal(forged.status,403);
+  assert.equal(env.state.rows.length,2);
 });
