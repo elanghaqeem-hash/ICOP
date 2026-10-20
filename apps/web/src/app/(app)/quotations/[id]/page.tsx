@@ -82,14 +82,36 @@ export default function QuotationPage() {
         <div className="grid g2">
           <div className="card">
             <h3>Rincian</h3>
-            <div className="table-wrap"><table className="t"><thead><tr><th>#</th><th>Uraian</th><th className="r">Qty</th><th className="r">Jumlah</th></tr></thead><tbody>
+            <div className="quote-desktop-lines"><div className="table-wrap"><table className="t"><thead><tr><th>#</th><th>Uraian</th><th className="r">Qty</th><th className="r">Jumlah</th></tr></thead><tbody>
               {q.lines.map((l: any) => <tr key={l.id}><td>{l.lineNo}</td><td>{l.description}<div className="sub">{idr(l.unitPrice)} / {l.unit}</div></td><td className="r">{l.qty}</td><td className="r">{idr(l.amount)}</td></tr>)}
               <tr><td colSpan={3}>Subtotal</td><td className="r">{idr(q.subtotal)}</td></tr>
               {q.discountPct > 0 && <tr><td colSpan={3}>Diskon {q.discountPct}%</td><td className="r">− {idr(q.discountAmount)}</td></tr>}
               <tr><td colSpan={3}>Total ex-PPN</td><td className="r">{idr(q.totalBeforeTax)}</td></tr>
               <tr><td colSpan={3}>PPN {q.taxRate}%</td><td className="r">{idr(q.taxAmount)}</td></tr>
               <tr><td colSpan={3}><b>Total</b></td><td className="r"><b>{idr(q.grandTotal)}</b></td></tr>
-            </tbody></table></div>
+            </tbody></table></div></div>
+            <div className="quote-mobile-lines">
+              {q.lines.map((l: any) => (
+                <article key={l.id} className="quote-mobile-item">
+                  <div className="quote-mobile-description">
+                    <span className="sub">Item {l.lineNo}</span>
+                    <strong>{l.description}</strong>
+                  </div>
+                  <dl className="quote-mobile-facts">
+                    <div><dt>Volume</dt><dd>{l.qty} {l.unit}</dd></div>
+                    <div><dt>Harga satuan</dt><dd>{idr(l.unitPrice)}</dd></div>
+                  </dl>
+                  <div className="quote-mobile-item-total"><span>Jumlah</span><b>{idr(l.amount)}</b></div>
+                </article>
+              ))}
+              <dl className="quote-mobile-summary">
+                <div><dt>Subtotal</dt><dd>{idr(q.subtotal)}</dd></div>
+                {q.discountPct > 0 && <div><dt>Diskon {q.discountPct}%</dt><dd>− {idr(q.discountAmount)}</dd></div>}
+                <div><dt>Total sebelum PPN</dt><dd>{idr(q.totalBeforeTax)}</dd></div>
+                <div><dt>PPN {q.taxRate}%</dt><dd>{idr(q.taxAmount)}</dd></div>
+                <div className="grand"><dt>Total</dt><dd>{idr(q.grandTotal)}</dd></div>
+              </dl>
+            </div>
             {q.internalCost != null && <div className="alert info" style={{ marginTop: 8 }}>Internal: biaya {idr(q.internalCost)} · floor {idr(q.floorPrice)} · margin {q.grossMarginPct ?? '—'}%</div>}
           </div>
           <div className="card">
@@ -115,9 +137,11 @@ export default function QuotationPage() {
       {doc && (
         <div className="card">
           <div className="row"><h3 style={{ margin: 0 }}>Pratinjau surat penawaran</h3><span className="spacer" />
-            <button className="btn sec sm" onClick={() => { const w = window.open('', '_blank'); if (w) { w.document.write(doc); w.document.close(); w.focus(); w.print(); } }}>Cetak / PDF</button>
+            <button className="btn sec sm" onClick={() => { const w = window.open('', '_blank'); if (w) { w.document.open(); w.document.write(doc); w.document.close(); } }}>Buka penuh</button>
+            <button className="btn sec sm" onClick={() => { const w = window.open('', '_blank'); if (w) { w.document.open(); w.document.write(doc); w.document.close(); w.focus(); w.print(); } }}>Cetak / PDF</button>
             <button className="btn sec sm" onClick={() => setDoc(null)}>Tutup</button></div>
-          <iframe title="Surat penawaran" sandbox="allow-same-origin allow-modals" srcDoc={doc} style={{ width: '100%', height: 640, border: '1px solid var(--line)', borderRadius: 8, marginTop: 8, background: '#fff' }} />
+          <p className="sub quote-preview-tip">Pratinjau menyesuaikan lebar layar. Gunakan Cetak / PDF untuk format dokumen A4.</p>
+          <iframe className="quote-preview-iframe" title="Surat penawaran" sandbox="allow-same-origin allow-modals" srcDoc={doc} />
         </div>
       )}
     </>
