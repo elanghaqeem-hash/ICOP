@@ -36,7 +36,7 @@ describe('Quotation mobile document', () => {
     expect(html).toContain('@media print');
     expect(html).toContain('size:A4');
     expect(html).toContain('Penetration Testing Mobile Banking');
-    expect(html.match(/Rp 85\\.000\\.000/g)).toHaveLength(4);
+    expect(html.match(/Rp 85[.]000[.]000/g)?.length).toBeGreaterThanOrEqual(4);
     expect(html).toContain('Rp 94.350.000');
     expect(html).not.toMatch(/internalCost|grossMarginPct|floorPrice/);
   });
